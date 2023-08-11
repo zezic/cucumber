@@ -8,7 +8,7 @@ use krakatau2::{
     lib::{
         assemble,
         disassemble::refprinter::{self, RefOrString, ConstData, SingleTag, UtfData},
-        classfile::{self, code::Instr, parse::Class, attrs::AttrBody},
+        classfile::{self, code::{Instr, Pos}, parse::Class, attrs::AttrBody},
         AssemblerOptions, DisassemblerOptions, ParserOptions,
     },
     zip,
@@ -68,7 +68,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn trace_class(class: &Class<'_>) {
+fn randomize_class(class: &mut Class<'_>) {
     let mut bstable = None;
     let mut inner_classes = None;
     for attr in &class.attrs {
@@ -83,38 +83,43 @@ fn trace_class(class: &Class<'_>) {
     let rp = refprinter::RefPrinter::new(true, &class.cp, bstable, inner_classes);
     // dbg!(&rp);
 
-    let method = class.methods.iter().skip(1).next();
+    let method = class.methods.iter_mut().skip(1).next();
     let Some(method) = method else { return; };
 
-    let Some(attr) = method.attrs.first() else { return; };
-    let classfile::attrs::AttrBody::Code((code_1, _code_2)) = &attr.body else { return; };
-    let bytecode = &code_1.bytecode;
-    for (pos, ix) in &bytecode.0 {
+    let Some(attr) = method.attrs.first_mut() else { return; };
+    let classfile::attrs::AttrBody::Code((code_1, _code_2)) = &mut attr.body else { return; };
+    let bytecode = &mut code_1.bytecode;
+
+    let mut new_bytecode: Vec<(Pos, Instr)> = vec![];
+    for (pos, ix) in bytecode.0.drain(..) {
         // println!("IX: {:?}", ix);
-        if let Instr::Ldc(pool_idx) = ix {
-            // let item = class.cp.0.get(*pool_idx as usize);
-            // let item = rp.ldc(*pool_idx as u16);
-            let Some(const_line) = rp.cpool.get(*pool_idx as usize) else { continue; };
-            let ConstData::Single(SingleTag::String, idx) = const_line.data else { continue; };
-            let Some(const_line) = rp.cpool.get(idx as usize) else { continue; };
-            let ConstData::Utf8(utf_data) = &const_line.data else { continue; };
-            println!("LDC: {}", utf_data.s);
-            // match item {
-            //     RefOrString::Raw(idx) => {},
-            //     RefOrString::Sym(idx) => {},
-            //     RefOrString::RawBs(idx) => {},
-            //     RefOrString::Str(str_lit) => {
-            //         println!("STR LIT: {}", str_lit);
-            //     },
-            // };
-            // println!("CP Item: {:?}", item);
-            // if let Some(item) = class.cp.utf8(*pool_idx as u16) {
-            //     if let Ok(text) = std::str::from_utf8(item) {
-            //         println!("CP Item: {}", text);
-            //     }
-            // }
+
+        // if let Instr::Ldc(pool_idx) = ix {
+        //     let Some(const_line) = rp.cpool.get(pool_idx as usize) else { continue; };
+        //     let ConstData::Single(SingleTag::String, idx) = const_line.data else { continue; };
+        //     let Some(const_line) = rp.cpool.get(idx as usize) else { continue; };
+        //     let ConstData::Utf8(utf_data) = &const_line.data else { continue; };
+        //     println!("LDC: {}", utf_data.s);
+        // }
+
+        if let Instr::Invokevirtual(248) = ix {
+            for offset in 1..=3 {
+                let rn: u8 = rand::random();
+                let len = new_bytecode.len();
+                let pos = new_bytecode[len - offset].0;
+                let old = new_bytecode[len - offset].1.clone();
+                // if !matches!(old, Instr::Sipush(_) | Instr::Bipush(_)) {
+                //     continue;
+                // }
+                let new = Instr::Sipush(rn as i16);
+                // println!("{:?} -> {:?}", old, new);
+                new_bytecode[len - offset] = (pos, new);
+            }
         }
+
+        new_bytecode.push((pos, ix));
     }
+    bytecode.0 = new_bytecode;
 }
 
 fn reasm(class: &Class<'_>) -> Result<Vec<u8>> {
@@ -143,7 +148,7 @@ fn patch_data(name: &str, data: &[u8]) -> Result<Vec<u8>> {
     .map_err(|err| anyhow!("Parse: {:?}", err))?;
 
     if name.ends_with("kek.class") {
-        trace_class(&class);
+        randomize_class(&mut class);
     }
 
     patch_class(&mut class);
