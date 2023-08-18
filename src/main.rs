@@ -1,4 +1,4 @@
-use std::{env, fs, io::Read, path::Path, time::Instant};
+use std::{env, fs, io::Read, path::Path, time::Instant, collections::HashSet};
 
 use anyhow::{anyhow, Result};
 
@@ -7,21 +7,30 @@ use krakatau2::{
     file_output_util::Writer,
     lib::{
         assemble,
-        disassemble::refprinter::{self, RefOrString, ConstData, SingleTag, UtfData},
-        classfile::{self, code::{Instr, Pos}, parse::Class, attrs::AttrBody},
+        classfile::{
+            self,
+            attrs::{AttrBody, Attribute},
+            code::{Instr, Pos},
+            parse::Class, cpool::{ConstPool, Const, BStr},
+        },
+        disassemble::refprinter::{
+            self, ConstData, FmimTag, RefOrString, RefPrinter, SingleTag, UtfData,
+        },
         AssemblerOptions, DisassemblerOptions, ParserOptions,
     },
     zip,
 };
 
+const ANCHOR: &str = "Inverted Selected Borderless Button background";
+
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
 
-    let jar_name = &args[1];
-    let output_name = &args[2];
+    let input_jar = &args[1];
+    let output_jar = &args[2];
 
     let mut class_buf = Vec::new();
-    let file = fs::File::open(jar_name)?;
+    let file = fs::File::open(input_jar)?;
     let mut zip = zip::ZipArchive::new(file)?;
     let class_ext = ".class";
 
@@ -29,10 +38,19 @@ fn main() -> Result<()> {
 
     let mut classes = vec![];
 
-    let bar = ProgressBar::new(zip.len() as u64);
+    let progress_bar = ProgressBar::new(zip.len() as u64);
+
+    let rgb_method = {
+        let mut file = zip.by_name("dsj.class").unwrap();
+        class_buf.clear();
+        class_buf.reserve(file.size() as usize);
+        file.read_to_end(&mut class_buf)?;
+        drop(file);
+        find_rgb_method_in_data(&class_buf).unwrap()
+    };
 
     for i in 0..zip.len() {
-        bar.inc(1);
+        progress_bar.inc(1);
         let mut file = zip.by_index(i)?;
 
         let name = file.name().to_owned();
@@ -44,17 +62,20 @@ fn main() -> Result<()> {
         class_buf.reserve(file.size() as usize);
         file.read_to_end(&mut class_buf)?;
 
-        let patched = patch_data(&name, &class_buf)?;
-
-        classes.push((name, patched));
+        if name.ends_with("dsj.class") || name.ends_with("oMz.class") || name.ends_with("theme/kX3.class") {
+            let patched = patch_data(&name, &class_buf, &rgb_method)?;
+            classes.push((name, patched));
+        } else {
+            classes.push((name, class_buf.clone()));
+        }
     }
 
-    bar.finish();
+    progress_bar.finish();
 
     let dur = Instant::now().duration_since(now);
     println!("Patched: {:?}", dur);
 
-    let mut writer = Writer::new(Path::new(output_name))?;
+    let mut writer = Writer::new(Path::new(output_jar))?;
 
     let now = Instant::now();
 
@@ -68,10 +89,55 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn randomize_class(class: &mut Class<'_>) {
+#[derive(Debug, Clone)]
+struct MethodDescription {
+    class: String,
+    method: String,
+    signature: String,
+}
+
+fn find_method_description(rp: &RefPrinter<'_>, method_id: u16) -> Option<MethodDescription> {
+    let const_line = rp.cpool.get(method_id as usize)?;
+    let ConstData::Fmim(FmimTag::Method, c, nat) = const_line.data else { return None; };
+
+    let class = {
+        let const_line = rp.cpool.get(c as usize)?;
+        let ConstData::Single(SingleTag::Class, c) = const_line.data else { return None; };
+        let const_line = rp.cpool.get(c as usize)?;
+        let ConstData::Utf8(utf_data) = &const_line.data else { return None; };
+        utf_data.s.to_string()
+    };
+
+    let const_line = rp.cpool.get(nat as usize)?;
+    let ConstData::Nat(met, sig) = const_line.data else { return None; };
+
+    let method = {
+        let const_line = rp.cpool.get(met as usize)?;
+        let ConstData::Utf8(utf_data) = &const_line.data else { return None; };
+        utf_data.s.to_string()
+    };
+
+    let signature = {
+        let const_line = rp.cpool.get(sig as usize)?;
+        let ConstData::Utf8(utf_data) = &const_line.data else { return None; };
+        utf_data.s.to_string()
+    };
+
+    Some(MethodDescription { class, method, signature })
+}
+
+fn find_utf_ldc(rp: &RefPrinter<'_>, id: u16) -> Option<String> {
+    let const_line = rp.cpool.get(id as usize)?;
+    let ConstData::Single(SingleTag::String, idx) = const_line.data else { return None; };
+    let const_line = rp.cpool.get(idx as usize)?;
+    let ConstData::Utf8(utf_data) = &const_line.data else { return None; };
+    return Some(utf_data.s.to_string())
+}
+
+fn init_refprinter<'a>(cp: &ConstPool<'a>, attrs: &'a [Attribute<'a>]) -> RefPrinter<'a> {
     let mut bstable = None;
     let mut inner_classes = None;
-    for attr in &class.attrs {
+    for attr in attrs {
         use AttrBody::*;
         match &attr.body {
             BootstrapMethods(v) => bstable = Some(v.as_ref()),
@@ -80,10 +146,93 @@ fn randomize_class(class: &mut Class<'_>) {
         }
     }
 
-    let rp = refprinter::RefPrinter::new(true, &class.cp, bstable, inner_classes);
-    // dbg!(&rp);
+    let rp = refprinter::RefPrinter::new(true, &cp, bstable, inner_classes);
 
-    let method = class.methods.iter_mut().skip(1).next();
+    rp
+}
+
+type MethodId = u16;
+
+fn find_rgb_method_in_data(data: &[u8]) -> Option<MethodDescription> {
+    let class = classfile::parse(
+        &data,
+        ParserOptions {
+            no_short_code_attr: true,
+        },
+    )
+    .map_err(|err| anyhow!("Parse: {:?}", err)).ok()?;
+    let (_id, desc) = find_rgb_method(&class)?;
+    Some(desc)
+}
+
+fn find_rgb_method(class: &Class<'_>) -> Option<(MethodId, MethodDescription)> {
+    println!("Searching RGB method");
+
+    const RGB_SIG_START: &str = "(Ljava/lang/String;III)";
+
+    let rp = init_refprinter(&class.cp, &class.attrs);
+
+    let method = class.methods.iter().skip(1).next();
+    let method = method?;
+
+    let attr = method.attrs.first()?;
+    let classfile::attrs::AttrBody::Code((code_1, _code_2)) = &attr.body else { return None; };
+    let bytecode = &code_1.bytecode;
+
+    for (_pos, ix) in &bytecode.0 {
+        if let Instr::Invokevirtual(method_id) = &ix {
+            let method_descr = find_method_description(&rp, *method_id)?;
+            if method_descr.signature.starts_with(RGB_SIG_START) {
+                return Some((*method_id, method_descr));
+            }
+        }
+    }
+
+    None
+}
+
+fn randomize_class<'a>(name: &str, class: &mut Class<'a>, method_idx: usize, rgb_method_desc: &'a MethodDescription) {
+    println!("Randomizing {}", name);
+
+    let (rgb_method_id, rgb_method_desc) = match find_rgb_method(class) {
+        Some(met) => met,
+        None => {
+            println!("Can't find RGB method, adding CP entries.");
+
+            let class_utf_id = class.cp.0.len();
+            class.cp.0.push(Const::Utf8(BStr(rgb_method_desc.class.as_bytes())));
+
+            let method_utf_id = class.cp.0.len();
+            class.cp.0.push(Const::Utf8(BStr(rgb_method_desc.method.as_bytes())));
+
+            let sig_utf_id = class.cp.0.len();
+            class.cp.0.push(Const::Utf8(BStr(rgb_method_desc.signature.as_bytes())));
+
+            let class_id = class.cp.0.len();
+            class.cp.0.push(Const::Class(class_utf_id as u16));
+
+            let name_and_type_id = class.cp.0.len();
+            class.cp.0.push(Const::NameAndType(method_utf_id as u16, sig_utf_id as u16));
+
+            let method_id = class.cp.0.len();
+            class.cp.0.push(Const::Method(class_id as u16, name_and_type_id as u16));
+
+            (method_id as u16, rgb_method_desc.clone())
+        }
+    };
+
+    println!("RGB METHOD: {} {:?}", rgb_method_id, rgb_method_desc);
+
+    const COLOR_DEFINE_SIGS: &[(&str, usize)] = &[
+        ("(Ljava/lang/String;I)", 1),
+        ("(Ljava/lang/String;III)", 3),
+        // ("(Ljava/lang/String;IIII)", 4),
+        ("(Ljava/lang/String;FFF)", 3),
+    ];
+
+    let rp = init_refprinter(&class.cp, &class.attrs);
+
+    let method = class.methods.iter_mut().skip(method_idx).next();
     let Some(method) = method else { return; };
 
     let Some(attr) = method.attrs.first_mut() else { return; };
@@ -91,35 +240,56 @@ fn randomize_class(class: &mut Class<'_>) {
     let bytecode = &mut code_1.bytecode;
 
     let mut new_bytecode: Vec<(Pos, Instr)> = vec![];
-    for (pos, ix) in bytecode.0.drain(..) {
-        // println!("IX: {:?}", ix);
 
-        // if let Instr::Ldc(pool_idx) = ix {
-        //     let Some(const_line) = rp.cpool.get(pool_idx as usize) else { continue; };
-        //     let ConstData::Single(SingleTag::String, idx) = const_line.data else { continue; };
-        //     let Some(const_line) = rp.cpool.get(idx as usize) else { continue; };
-        //     let ConstData::Utf8(utf_data) = &const_line.data else { continue; };
-        //     println!("LDC: {}", utf_data.s);
-        // }
+    let mut pos_gen = 0;
 
-        if let Instr::Invokevirtual(248) = ix {
-            for offset in 1..=3 {
-                let rn: u8 = rand::random();
-                let len = new_bytecode.len();
-                let pos = new_bytecode[len - offset].0;
-                let old = new_bytecode[len - offset].1.clone();
-                // if !matches!(old, Instr::Sipush(_) | Instr::Bipush(_)) {
-                //     continue;
-                // }
-                let new = Instr::Sipush(rn as i16);
-                // println!("{:?} -> {:?}", old, new);
-                new_bytecode[len - offset] = (pos, new);
+    for (_pos, ix) in bytecode.0.drain(..) {
+        // println!("POS: {:?} IX: {:?}", pos, ix);
+        let should_replace = match &ix {
+            Instr::Invokevirtual(method_id) => {
+                if let Some(method_descr) = find_method_description(&rp, *method_id) {
+                    // println!("{:?}", method_descr);
+                    COLOR_DEFINE_SIGS.iter().find_map(|(sig, color_args)| method_descr.signature.starts_with(sig).then_some(color_args))
+                } else {
+                    None
+                }
+            },
+            _ => None,
+        };
+
+        if let Some(color_args) = should_replace {
+            for _ in 0..*color_args {
+                new_bytecode.pop().unwrap();
             }
+            for _ in 0..3 {
+                let rn: u8 = rand::random();
+                let new = (
+                    Pos(pos_gen),
+                    Instr::Sipush(rn as i16)
+                );
+                // println!("NEW: {:?}", new);
+                new_bytecode.push(new);
+                pos_gen += 1;
+            }
+            // let last_label = new_bytecode.last().unwrap().0.0;
+            // let this_label = pos.0;
+            new_bytecode.push((Pos(pos_gen), Instr::Invokevirtual(rgb_method_id)));
+            pos_gen += 1;
+            // println!("---");
+        } else {
+            new_bytecode.push((Pos(pos_gen), ix));
+            pos_gen += 1;
         }
 
-        new_bytecode.push((pos, ix));
+        // if let Instr::Ldc(pool_idx) = ix {
+        // }
     }
     bytecode.0 = new_bytecode;
+
+    for attr in &mut code_1.attrs {
+        let classfile::attrs::AttrBody::LineNumberTable(table) = &mut attr.body else { continue; };
+        table.clear();
+    }
 }
 
 fn reasm(class: &Class<'_>) -> Result<Vec<u8>> {
@@ -138,7 +308,7 @@ fn reasm(class: &Class<'_>) -> Result<Vec<u8>> {
     Ok(data)
 }
 
-fn patch_data(name: &str, data: &[u8]) -> Result<Vec<u8>> {
+fn patch_data(name: &str, data: &[u8], rgb_method_desc: &MethodDescription) -> Result<Vec<u8>> {
     let mut class = classfile::parse(
         &data,
         ParserOptions {
@@ -147,16 +317,20 @@ fn patch_data(name: &str, data: &[u8]) -> Result<Vec<u8>> {
     )
     .map_err(|err| anyhow!("Parse: {:?}", err))?;
 
-    if name.ends_with("kek.class") {
-        randomize_class(&mut class);
+    if name.ends_with("dsj.class") || name.ends_with("kX3.class") {
+        let skip = if name.ends_with("dsj.class") { 1 } else if name.ends_with("kX3.class") { 4 } else { 0 };
+        randomize_class(name, &mut class, skip, rgb_method_desc);
+        Ok(reasm(&class)?)
+    } else if name.ends_with("oMz.class") {
+        patch_class(name, &mut class);
+        Ok(reasm(&class)?)
+    } else {
+        panic!("raositenars");
     }
 
-    patch_class(&mut class);
-
-    Ok(reasm(&class)?)
 }
 
-fn patch_class(class: &mut Class<'_>) {
+fn patch_class(name: &str, class: &mut Class<'_>) {
     for method in &mut class.methods {
         let Some(attr) = method.attrs.first_mut() else { continue; };
         let classfile::attrs::AttrBody::Code((code_1, _code_2)) = &mut attr.body else { continue; };
@@ -173,7 +347,7 @@ fn patch_class(class: &mut Class<'_>) {
                 continue;
             }
             if let [(_, ix), (_, Instr::Sipush(5000)), (_, Instr::IfIcmple(_))] = &mut ixs {
-                println!("Patching integrity check");
+                println!("Patching integrity check in {}", name);
                 *ix = Instr::Sipush(0);
             }
         }
