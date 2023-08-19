@@ -36,17 +36,22 @@ fn main() -> Result<()> {
 
     let ableton_color_defs = ask::parse_ask(&ask_file).unwrap();
     let mut html = String::new();
-    for (name, (r, g, b, a)) in ableton_color_defs {
+    for (name, (r, g, b, a)) in &ableton_color_defs {
         let def = ColorDef {
-            name,
-            color: Color::Rgbau(r, g, b, a)
+            name: name.clone(),
+            color: Color::Rgbau(*r, *g, *b, *a)
         };
         let def_html = def.as_html();
         html.push_str(&format!("{def_html}\n"));
     }
     fs::write("abl_theme.html", &html).expect("Unable to write theme file");
 
-    let bw_abl_mapping: HashMap<&str, &str> = HashMap::from_iter(mapping::RAW_MAPPING.iter().cloned());
+    let mut bw_abl_mapping: HashMap<&str, (u8, u8, u8, u8)> = HashMap::new();
+    for (bw_name, abl_name) in mapping::RAW_MAPPING {
+        if let Some(def) = ableton_color_defs.get(&abl_name.to_string()) {
+            bw_abl_mapping.insert(bw_name, *def);
+        }
+    }
 
     let mut class_buf = Vec::new();
     let file = fs::File::open(input_jar)?;
@@ -220,7 +225,7 @@ fn find_rgb_method(class: &Class<'_>) -> Option<(MethodId, MethodDescription)> {
     None
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Color {
     Rgbu(u8, u8, u8),
     HsvfAdjustment(f32, f32, f32),
@@ -228,7 +233,7 @@ enum Color {
     Grayscale(u8),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct ColorDef {
     name: String,
     color: Color,
@@ -259,10 +264,10 @@ enum ColorMethod {
     Grayscale,
 }
 
-fn instr_to_float(instr: Instr, rp: &RefPrinter<'_>) -> f32 {
+fn instr_to_float(instr: &Instr, rp: &RefPrinter<'_>) -> f32 {
     match instr {
         Instr::Ldc(id) => {
-            find_float_ldc(&rp, id as u16).unwrap()
+            find_float_ldc(&rp, *id as u16).unwrap()
         }
         Instr::Fconst0 => 0.0,
         Instr::Fconst1 => 1.0,
@@ -285,14 +290,9 @@ fn instr_to_u8(instr: &Instr) -> u8 {
     }
 }
 
-fn randomize_class<'a>(name: &str, class: &mut Class<'a>, method_idx: usize, rgb_method_desc: &'a MethodDescription, bw_abl_mapping: &HashMap<&str, &str>) -> Result<Vec<ColorDef>> {
-    println!("Randomizing {}", name);
+fn colorize_class<'a>(name: &str, class: &mut Class<'a>, method_idx: usize, rgb_method_desc: &'a MethodDescription, bw_abl_mapping: &HashMap<&str, (u8, u8, u8, u8)>) -> Result<Vec<ColorDef>> {
+    println!("Colorizing {}", name);
     let mut color_defs = vec![];
-
-    // println!("CP:");
-    // for (idx, x) in class.cp.0.iter().enumerate() {
-    //     println!("{}: {:?}", idx, x);
-    // }
 
     let (rgb_method_id, rgb_method_desc) = match find_rgb_method(class) {
         Some(met) => met,
@@ -344,7 +344,7 @@ fn randomize_class<'a>(name: &str, class: &mut Class<'a>, method_idx: usize, rgb
     let mut pos_gen = 0;
 
     for (_pos, ix) in bytecode.0.drain(..) {
-        let should_replace = match &ix {
+        let can_replace = match &ix {
             Instr::Invokevirtual(method_id) => {
                 if let Some(method_descr) = find_method_description(&rp, *method_id) {
                     COLOR_DEFINE_SIGS.iter().find_map(|(sig, color_args, color_method)| method_descr.signature.starts_with(sig).then_some((color_args, color_method)))
@@ -355,78 +355,69 @@ fn randomize_class<'a>(name: &str, class: &mut Class<'a>, method_idx: usize, rgb
             _ => None,
         };
 
-        if let Some((color_args, color_method)) = should_replace {
-            let has_alpha = *color_method == ColorMethod::Rgbau;
-            let alpha_ix = if has_alpha {
-                Some(new_bytecode.pop().unwrap().1)
-            } else {
-                None
-            };
+        if let Some((color_args, color_method)) = can_replace {
+            let maybe_ldc = &new_bytecode[new_bytecode.len() - 1 - color_args];
+            let Instr::Ldc(id) = maybe_ldc.1 else { panic!("No name LDC for color ix") };
+            let ldc = find_utf_ldc(&rp, id as u16).unwrap();
 
-            let mut bgr = vec![];
-
-            for _ in 0..*color_args - if has_alpha { 1 } else { 0 } {
-                bgr.push(new_bytecode.pop().unwrap().1);
-            }
-
-            let maybe_ldc = new_bytecode.last().unwrap();
-            if let Instr::Ldc(id) = maybe_ldc.1 {
-                let ldc = find_utf_ldc(&rp, id as u16).unwrap();
-                // println!("LDC {:?} BGR {:?} ALPHA {:?}", ldc, bgr, alpha_ix);
-                let color_def = ColorDef {
-                    name: ldc,
-                    color: match color_method {
-                        ColorMethod::Rgbu => {
-                            let r = instr_to_u8(&bgr.pop().unwrap());
-                            let g = instr_to_u8(&bgr.pop().unwrap());
-                            let b = instr_to_u8(&bgr.pop().unwrap());
-                            Color::Rgbu(r, g, b)
-                        },
-                        ColorMethod::HsvfAdjustment => {
-                            let h = instr_to_float(bgr.pop().unwrap(), &rp);
-                            let s = instr_to_float(bgr.pop().unwrap(), &rp);
-                            let v = instr_to_float(bgr.pop().unwrap(), &rp);
-                            Color::HsvfAdjustment(h, s, v)
-                        },
-                        ColorMethod::Rgbau => {
-                            let r = instr_to_u8(&bgr.pop().unwrap());
-                            let g = instr_to_u8(&bgr.pop().unwrap());
-                            let b = instr_to_u8(&bgr.pop().unwrap());
-                            let ix = alpha_ix.as_ref().unwrap();
-                            let a = instr_to_u8(ix);
-                            Color::Rgbau(r, g, b, a)
-                        },
-                        ColorMethod::Grayscale => {
-                            let v = instr_to_u8(&bgr.pop().unwrap());
-                            Color::Grayscale(v)
-                        }
+            let color_def = ColorDef {
+                name: ldc.clone(),
+                color: match color_method {
+                    ColorMethod::Rgbu => {
+                        let r = instr_to_u8(&new_bytecode[new_bytecode.len() - 1 - color_args + 1].1);
+                        let g = instr_to_u8(&new_bytecode[new_bytecode.len() - 1 - color_args + 2].1);
+                        let b = instr_to_u8(&new_bytecode[new_bytecode.len() - 1 - color_args + 3].1);
+                        Color::Rgbu(r, g, b)
+                    },
+                    ColorMethod::HsvfAdjustment => {
+                        let h = instr_to_float(&new_bytecode[new_bytecode.len() - 1 - color_args + 1].1, &rp);
+                        let s = instr_to_float(&new_bytecode[new_bytecode.len() - 1 - color_args + 1].1, &rp);
+                        let v = instr_to_float(&new_bytecode[new_bytecode.len() - 1 - color_args + 1].1, &rp);
+                        Color::HsvfAdjustment(h, s, v)
+                    },
+                    ColorMethod::Rgbau => {
+                        let r = instr_to_u8(&new_bytecode[new_bytecode.len() - 1 - color_args + 1].1);
+                        let g = instr_to_u8(&new_bytecode[new_bytecode.len() - 1 - color_args + 2].1);
+                        let b = instr_to_u8(&new_bytecode[new_bytecode.len() - 1 - color_args + 3].1);
+                        let a = instr_to_u8(&new_bytecode[new_bytecode.len() - 1 - color_args + 4].1);
+                        Color::Rgbau(r, g, b, a)
+                    },
+                    ColorMethod::Grayscale => {
+                        let v = instr_to_u8(&new_bytecode[new_bytecode.len() - 1 - color_args + 1].1);
+                        Color::Grayscale(v)
                     }
-                };
-                color_defs.push(color_def);
-            }
-
-            for _ in 0..3 {
-                let rn: u8 = rand::random();
-                let new = (
-                    Pos(pos_gen),
-                    Instr::Sipush(rn as i16)
-                );
-                new_bytecode.push(new);
-                pos_gen += 1;
-            }
-            if has_alpha {
-                new_bytecode.push((Pos(pos_gen), alpha_ix.unwrap()));
-                pos_gen += 1;
-                new_bytecode.push((Pos(pos_gen), ix));
-            } else {
-                new_bytecode.push((Pos(pos_gen), Instr::Invokevirtual(rgb_method_id)));
+                }
             };
-            pos_gen += 1;
+            color_defs.push(color_def.clone());
+
+            if let Some(new_colors) = bw_abl_mapping.get(ldc.as_str()) {
+                let (r, g, b, _a) = *new_colors;
+                let colors = [r, g, b];
+
+                for _ in 0..*color_args {
+                    new_bytecode.pop();
+                }
+
+                for color in colors {
+                    let new = (
+                        Pos(pos_gen),
+                        Instr::Sipush(color as i16)
+                    );
+                    new_bytecode.push(new);
+                    pos_gen += 1;
+                }
+                new_bytecode.push((Pos(pos_gen), Instr::Invokevirtual(rgb_method_id)));
+                pos_gen += 1;
+            } else {
+                new_bytecode.push((Pos(pos_gen), ix));
+                pos_gen += 1;
+            }
         } else {
             new_bytecode.push((Pos(pos_gen), ix));
             pos_gen += 1;
         }
     }
+
     bytecode.0 = new_bytecode;
 
     for attr in &mut code_1.attrs {
@@ -453,7 +444,7 @@ fn reasm(class: &Class<'_>) -> Result<Vec<u8>> {
     Ok(data)
 }
 
-fn patch_data(name: &str, data: &[u8], rgb_method_desc: &MethodDescription, html: &mut String, bw_abl_mapping: &HashMap<&str, &str>) -> Result<Vec<u8>> {
+fn patch_data(name: &str, data: &[u8], rgb_method_desc: &MethodDescription, html: &mut String, bw_abl_mapping: &HashMap<&str, (u8, u8, u8, u8)>) -> Result<Vec<u8>> {
     let mut class = classfile::parse(
         &data,
         ParserOptions {
@@ -464,7 +455,7 @@ fn patch_data(name: &str, data: &[u8], rgb_method_desc: &MethodDescription, html
 
     if name.ends_with("dsj.class") || name.ends_with("kX3.class") {
         let skip = if name.ends_with("dsj.class") { 1 } else if name.ends_with("kX3.class") { 4 } else { 0 };
-        let color_defs = randomize_class(name, &mut class, skip, rgb_method_desc, bw_abl_mapping).unwrap();
+        let color_defs = colorize_class(name, &mut class, skip, rgb_method_desc, bw_abl_mapping).unwrap();
         for def in color_defs {
             let def_html = def.as_html();
             html.push_str(&format!("{def_html}\n"));
