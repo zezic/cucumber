@@ -1,4 +1,4 @@
-use std::{env, fs, io::Read, path::Path, time::Instant};
+use std::{env, fs, io::Read, path::Path, time::Instant, collections::HashMap};
 
 use anyhow::{anyhow, Result};
 
@@ -21,6 +21,9 @@ use krakatau2::{
     zip,
 };
 
+mod ask;
+mod mapping;
+
 const ANCHOR: &str = "Inverted Selected Borderless Button background";
 
 fn main() -> Result<()> {
@@ -28,6 +31,22 @@ fn main() -> Result<()> {
 
     let input_jar = &args[1];
     let output_jar = &args[2];
+
+    let ask_file = &args[3];
+
+    let ableton_color_defs = ask::parse_ask(&ask_file).unwrap();
+    let mut html = String::new();
+    for (name, (r, g, b, a)) in ableton_color_defs {
+        let def = ColorDef {
+            name,
+            color: Color::Rgbau(r, g, b, a)
+        };
+        let def_html = def.as_html();
+        html.push_str(&format!("{def_html}\n"));
+    }
+    fs::write("abl_theme.html", &html).expect("Unable to write theme file");
+
+    let bw_abl_mapping: HashMap<&str, &str> = HashMap::from_iter(mapping::RAW_MAPPING.iter().cloned());
 
     let mut class_buf = Vec::new();
     let file = fs::File::open(input_jar)?;
@@ -65,7 +84,7 @@ fn main() -> Result<()> {
         file.read_to_end(&mut class_buf)?;
 
         if name.ends_with("dsj.class") || name.ends_with("oMz.class") || name.ends_with("theme/kX3.class") {
-            let patched = patch_data(&name, &class_buf, &rgb_method, &mut html)?;
+            let patched = patch_data(&name, &class_buf, &rgb_method, &mut html, &bw_abl_mapping)?;
             classes.push((name, patched));
         } else {
             classes.push((name, class_buf.clone()));
@@ -88,7 +107,7 @@ fn main() -> Result<()> {
     let dur = Instant::now().duration_since(now);
     println!("Writed: {:?}", dur);
 
-    fs::write("theme.html", &html).expect("Unable to write theme file");
+    fs::write("bw_theme.html", &html).expect("Unable to write theme file");
 
     Ok(())
 }
@@ -266,7 +285,7 @@ fn instr_to_u8(instr: &Instr) -> u8 {
     }
 }
 
-fn randomize_class<'a>(name: &str, class: &mut Class<'a>, method_idx: usize, rgb_method_desc: &'a MethodDescription) -> Result<Vec<ColorDef>> {
+fn randomize_class<'a>(name: &str, class: &mut Class<'a>, method_idx: usize, rgb_method_desc: &'a MethodDescription, bw_abl_mapping: &HashMap<&str, &str>) -> Result<Vec<ColorDef>> {
     println!("Randomizing {}", name);
     let mut color_defs = vec![];
 
@@ -434,7 +453,7 @@ fn reasm(class: &Class<'_>) -> Result<Vec<u8>> {
     Ok(data)
 }
 
-fn patch_data(name: &str, data: &[u8], rgb_method_desc: &MethodDescription, html: &mut String) -> Result<Vec<u8>> {
+fn patch_data(name: &str, data: &[u8], rgb_method_desc: &MethodDescription, html: &mut String, bw_abl_mapping: &HashMap<&str, &str>) -> Result<Vec<u8>> {
     let mut class = classfile::parse(
         &data,
         ParserOptions {
@@ -445,7 +464,7 @@ fn patch_data(name: &str, data: &[u8], rgb_method_desc: &MethodDescription, html
 
     if name.ends_with("dsj.class") || name.ends_with("kX3.class") {
         let skip = if name.ends_with("dsj.class") { 1 } else if name.ends_with("kX3.class") { 4 } else { 0 };
-        let color_defs = randomize_class(name, &mut class, skip, rgb_method_desc).unwrap();
+        let color_defs = randomize_class(name, &mut class, skip, rgb_method_desc, bw_abl_mapping).unwrap();
         for def in color_defs {
             let def_html = def.as_html();
             html.push_str(&format!("{def_html}\n"));

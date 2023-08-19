@@ -11,3 +11,4 @@ indicatif = "0.17.6"
 krakatau2 = { path = "../Krakatau" }
 md5 = "0.7.0"
 rand = "0.8.5"
+xml-rs = "0.8.16"
