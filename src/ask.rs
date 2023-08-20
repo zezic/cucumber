@@ -56,7 +56,13 @@ pub fn parse_ask(filename: &str) -> std::io::Result<AbletonColorDefs> {
                     },
                     4 => {
                         let attr = &attributes.first().unwrap().value;
-                        let val = attr.parse::<u8>().unwrap();
+                        let val = match attr.parse::<f32>() {
+                            Ok(num) => num,
+                            Err(err) => {
+                                panic!("Can't parse Ableton color component {}: {}", attr, err);
+                            }
+                        };
+                        let val = val.round() as u8;
                         match name.to_string().as_str() {
                             "R" => r = val,
                             "G" => g = val,

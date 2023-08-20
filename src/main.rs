@@ -34,6 +34,8 @@ fn main() -> Result<()> {
 
     let ask_file = &args[3];
 
+    println!("ASK: {}", ask_file);
+
     let ableton_color_defs = ask::parse_ask(&ask_file).unwrap();
     let mut html = String::new();
     for (name, (r, g, b, a)) in &ableton_color_defs {
@@ -50,6 +52,8 @@ fn main() -> Result<()> {
     for (bw_name, abl_name) in mapping::RAW_MAPPING {
         if let Some(def) = ableton_color_defs.get(&abl_name.to_string()) {
             bw_abl_mapping.insert(bw_name, *def);
+        } else {
+            panic!("Can't find color in Ableton theme: {}", abl_name);
         }
     }
 
@@ -64,13 +68,13 @@ fn main() -> Result<()> {
 
     let progress_bar = ProgressBar::new(zip.len() as u64);
 
-    let rgb_method = {
+    let rgba_method = {
         let mut file = zip.by_name("dsj.class").unwrap();
         class_buf.clear();
         class_buf.reserve(file.size() as usize);
         file.read_to_end(&mut class_buf)?;
         drop(file);
-        find_rgb_method_in_data(&class_buf).unwrap()
+        find_rgba_method_in_data(&class_buf).unwrap()
     };
 
     let mut html = String::new();
@@ -89,7 +93,7 @@ fn main() -> Result<()> {
         file.read_to_end(&mut class_buf)?;
 
         if name.ends_with("dsj.class") || name.ends_with("oMz.class") || name.ends_with("theme/kX3.class") {
-            let patched = patch_data(&name, &class_buf, &rgb_method, &mut html, &bw_abl_mapping)?;
+            let patched = patch_data(&name, &class_buf, &rgba_method, &mut html, &bw_abl_mapping)?;
             classes.push((name, patched));
         } else {
             classes.push((name, class_buf.clone()));
@@ -195,14 +199,26 @@ fn find_rgb_method_in_data(data: &[u8]) -> Option<MethodDescription> {
         },
     )
     .map_err(|err| anyhow!("Parse: {:?}", err)).ok()?;
-    let (_id, desc) = find_rgb_method(&class)?;
+    let (_id, desc) = find_method_by_sig(&class, "(Ljava/lang/String;III)")?;
     Some(desc)
 }
 
-fn find_rgb_method(class: &Class<'_>) -> Option<(MethodId, MethodDescription)> {
+fn find_rgba_method_in_data(data: &[u8]) -> Option<MethodDescription> {
+    let class = classfile::parse(
+        &data,
+        ParserOptions {
+            no_short_code_attr: true,
+        },
+    )
+    .map_err(|err| anyhow!("Parse: {:?}", err)).ok()?;
+    let (_id, desc) = find_method_by_sig(&class, "(Ljava/lang/String;IIII)")?;
+    Some(desc)
+}
+
+fn find_method_by_sig(class: &Class<'_>, sig_start: &str) -> Option<(MethodId, MethodDescription)> {
     println!("Searching RGB method");
 
-    const RGB_SIG_START: &str = "(Ljava/lang/String;III)";
+    const RGBA_SIG_START: &str = "(Ljava/lang/String;IIII)";
 
     let rp = init_refprinter(&class.cp, &class.attrs);
 
@@ -216,7 +232,7 @@ fn find_rgb_method(class: &Class<'_>) -> Option<(MethodId, MethodDescription)> {
     for (_pos, ix) in &bytecode.0 {
         if let Instr::Invokevirtual(method_id) = &ix {
             let method_descr = find_method_description(&rp, *method_id)?;
-            if method_descr.signature.starts_with(RGB_SIG_START) {
+            if method_descr.signature.starts_with(RGBA_SIG_START) {
                 return Some((*method_id, method_descr));
             }
         }
@@ -290,23 +306,23 @@ fn instr_to_u8(instr: &Instr) -> u8 {
     }
 }
 
-fn colorize_class<'a>(name: &str, class: &mut Class<'a>, method_idx: usize, rgb_method_desc: &'a MethodDescription, bw_abl_mapping: &HashMap<&str, (u8, u8, u8, u8)>) -> Result<Vec<ColorDef>> {
+fn colorize_class<'a>(name: &str, class: &mut Class<'a>, method_idx: usize, rgba_method_desc: &'a MethodDescription, bw_abl_mapping: &HashMap<&str, (u8, u8, u8, u8)>) -> Result<Vec<ColorDef>> {
     println!("Colorizing {}", name);
     let mut color_defs = vec![];
 
-    let (rgb_method_id, rgb_method_desc) = match find_rgb_method(class) {
+    let (rgba_method_id, rgba_method_desc) = match find_method_by_sig(class, "(Ljava/lang/String;IIII)") {
         Some(met) => met,
         None => {
-            println!("Can't find RGB method, adding CP entries.");
+            println!("Can't find RGBA method, adding CP entries.");
 
             let class_utf_id = class.cp.0.len();
-            class.cp.0.push(Const::Utf8(BStr(rgb_method_desc.class.as_bytes())));
+            class.cp.0.push(Const::Utf8(BStr(rgba_method_desc.class.as_bytes())));
 
             let method_utf_id = class.cp.0.len();
-            class.cp.0.push(Const::Utf8(BStr(rgb_method_desc.method.as_bytes())));
+            class.cp.0.push(Const::Utf8(BStr(rgba_method_desc.method.as_bytes())));
 
             let sig_utf_id = class.cp.0.len();
-            class.cp.0.push(Const::Utf8(BStr(rgb_method_desc.signature.as_bytes())));
+            class.cp.0.push(Const::Utf8(BStr(rgba_method_desc.signature.as_bytes())));
 
             let class_id = class.cp.0.len();
             class.cp.0.push(Const::Class(class_utf_id as u16));
@@ -317,11 +333,11 @@ fn colorize_class<'a>(name: &str, class: &mut Class<'a>, method_idx: usize, rgb_
             let method_id = class.cp.0.len();
             class.cp.0.push(Const::Method(class_id as u16, name_and_type_id as u16));
 
-            (method_id as u16, rgb_method_desc.clone())
+            (method_id as u16, rgba_method_desc.clone())
         }
     };
 
-    println!("RGB METHOD: {} {:?}", rgb_method_id, rgb_method_desc);
+    println!("RGBA METHOD: {} {:?}", rgba_method_id, rgba_method_desc);
 
     const COLOR_DEFINE_SIGS: &[(&str, usize, ColorMethod)] = &[
         ("(Ljava/lang/String;I)", 1, ColorMethod::Grayscale),
@@ -391,8 +407,8 @@ fn colorize_class<'a>(name: &str, class: &mut Class<'a>, method_idx: usize, rgb_
             color_defs.push(color_def.clone());
 
             if let Some(new_colors) = bw_abl_mapping.get(ldc.as_str()) {
-                let (r, g, b, _a) = *new_colors;
-                let colors = [r, g, b];
+                let (r, g, b, a) = *new_colors;
+                let colors = [r, g, b, a];
 
                 for _ in 0..*color_args {
                     new_bytecode.pop();
@@ -406,7 +422,7 @@ fn colorize_class<'a>(name: &str, class: &mut Class<'a>, method_idx: usize, rgb_
                     new_bytecode.push(new);
                     pos_gen += 1;
                 }
-                new_bytecode.push((Pos(pos_gen), Instr::Invokevirtual(rgb_method_id)));
+                new_bytecode.push((Pos(pos_gen), Instr::Invokevirtual(rgba_method_id)));
                 pos_gen += 1;
             } else {
                 new_bytecode.push((Pos(pos_gen), ix));
@@ -444,7 +460,7 @@ fn reasm(class: &Class<'_>) -> Result<Vec<u8>> {
     Ok(data)
 }
 
-fn patch_data(name: &str, data: &[u8], rgb_method_desc: &MethodDescription, html: &mut String, bw_abl_mapping: &HashMap<&str, (u8, u8, u8, u8)>) -> Result<Vec<u8>> {
+fn patch_data(name: &str, data: &[u8], rgba_method_desc: &MethodDescription, html: &mut String, bw_abl_mapping: &HashMap<&str, (u8, u8, u8, u8)>) -> Result<Vec<u8>> {
     let mut class = classfile::parse(
         &data,
         ParserOptions {
@@ -455,7 +471,7 @@ fn patch_data(name: &str, data: &[u8], rgb_method_desc: &MethodDescription, html
 
     if name.ends_with("dsj.class") || name.ends_with("kX3.class") {
         let skip = if name.ends_with("dsj.class") { 1 } else if name.ends_with("kX3.class") { 4 } else { 0 };
-        let color_defs = colorize_class(name, &mut class, skip, rgb_method_desc, bw_abl_mapping).unwrap();
+        let color_defs = colorize_class(name, &mut class, skip, rgba_method_desc, bw_abl_mapping).unwrap();
         for def in color_defs {
             let def_html = def.as_html();
             html.push_str(&format!("{def_html}\n"));
