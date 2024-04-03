@@ -74,16 +74,10 @@ pub fn parse_ask(filename: &str) -> std::io::Result<AbletonColorDefs> {
                     _ => {}
                 }
             }
-            XmlEvent::EndElement { name } => {
+            XmlEvent::EndElement { .. } => {
                 depth -= 1;
             }
-            XmlEvent::StartDocument { version, encoding, standalone } => {},
-            XmlEvent::EndDocument => {},
-            XmlEvent::ProcessingInstruction { name, data } => todo!(),
-            XmlEvent::CData(_) => todo!(),
-            XmlEvent::Comment(_) => todo!(),
-            XmlEvent::Characters(_) => todo!(),
-            XmlEvent::Whitespace(_) => {},
+            _ => {},
         }
     }
 
