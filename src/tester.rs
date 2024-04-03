@@ -221,7 +221,7 @@ fn scan_for_color_defs(class: &Class, palette_color_meths: &PaletteColorMethods,
 
         let bytecode = &code_1.bytecode;
 
-        for (idx, (pos, ix)) in bytecode.0.iter().enumerate() {
+        for (idx, (_, ix)) in bytecode.0.iter().enumerate() {
             let Instr::Invokevirtual(method_id) = ix else { continue; };
             let Some(method_descr) = find_method_description(&rp, *method_id) else { continue; };
 
