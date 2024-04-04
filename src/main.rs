@@ -218,8 +218,6 @@ fn find_rgba_method_in_data(data: &[u8]) -> Option<MethodDescription> {
 fn find_method_by_sig(class: &Class<'_>, sig_start: &str) -> Option<(MethodId, MethodDescription)> {
     println!("Searching RGB method");
 
-    const RGBA_SIG_START: &str = "(Ljava/lang/String;IIII)";
-
     let rp = init_refprinter(&class.cp, &class.attrs);
 
     let method = class.methods.iter().skip(1).next();
@@ -232,7 +230,7 @@ fn find_method_by_sig(class: &Class<'_>, sig_start: &str) -> Option<(MethodId, M
     for (_pos, ix) in &bytecode.0 {
         if let Instr::Invokevirtual(method_id) = &ix {
             let method_descr = find_method_description(&rp, *method_id)?;
-            if method_descr.signature.starts_with(RGBA_SIG_START) {
+            if method_descr.signature.starts_with(sig_start) {
                 return Some((*method_id, method_descr));
             }
         }

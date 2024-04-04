@@ -1,17 +1,17 @@
-use std::{collections::HashSet, env, fmt::Debug, fs, io::Read};
-
-use anyhow::anyhow;
+use std::{env, fmt::Debug, fs, io::Read};
 
 use indicatif::ProgressBar;
 use krakatau2::{
     lib::{
         classfile::{
-            self, attrs::{AttrBody, Attribute}, code::Instr, cpool::ConstPool, parse::Class
-        },
-        disassemble::refprinter::{ConstData, FmimTag, RefPrinter, SingleTag},
-        ParserOptions,
+            self,
+            attrs::{AttrBody, Attribute},
+            code::Instr,
+            cpool::ConstPool,
+            parse::Class,
+        }, disassemble::refprinter::{ConstData, FmimTag, RefPrinter, SingleTag}, parse_utf8, ParserOptions
     },
-    zip::{self, read::ZipFile},
+    zip,
 };
 
 // Will search constant pool for that (inside Utf8 entry)
@@ -50,13 +50,17 @@ fn main() -> anyhow::Result<()> {
         if let Some(useful_file_type) = is_useful_file(&class) {
             match useful_file_type {
                 UsefulFileType::MainPalette => {
+                    println!("Found main palette: {}", file_name);
                     if let Some(methods) = extract_palette_color_methods(&class) {
                         println!("{:#?}", methods);
                         palette_color_meths = Some(methods);
                     }
-                },
+                }
                 UsefulFileType::Init => {
-                    println!("Found init")
+                    println!("Found init: {}", file_name);
+                }
+                UsefulFileType::RawColor => {
+                    println!("Found raw color: {}", file_name);
                 },
             }
         }
@@ -77,32 +81,12 @@ fn main() -> anyhow::Result<()> {
                 continue;
             };
 
-            scan_for_color_defs(&class, &palette_color_meths, &file_name);
+            scan_for_named_color_defs(&class, &palette_color_meths, &file_name);
             progress_bar.inc(1);
             drop(file);
         }
         progress_bar.finish();
     }
-
-    // let mut file = zip.by_name("dsj.class").unwrap();
-    // let mut data = Vec::new();
-    // data.clear();
-    // data.reserve(file.size() as usize);
-    // file.read_to_end(&mut data)?;
-    // drop(file);
-
-    // let class = classfile::parse(
-    //     &data,
-    //     ParserOptions {
-    //         no_short_code_attr: true,
-    //     },
-    // ).map_err(|err| anyhow!("Parse: {:?}", err))?;
-
-    // for entry in class.cp.0 {
-    //     if let classfile::cpool::Const::Utf8(txt) = entry {
-    //         println!("{:?}", txt);
-    //     }
-    // }
 
     Ok(())
 }
@@ -157,28 +141,40 @@ fn init_refprinter<'a>(cp: &ConstPool<'a>, attrs: &'a [Attribute<'a>]) -> RefPri
 
 fn find_method_description(rp: &RefPrinter<'_>, method_id: u16) -> Option<MethodDescription> {
     let const_line = rp.cpool.get(method_id as usize)?;
-    let ConstData::Fmim(FmimTag::Method, c, nat) = const_line.data else { return None; };
+    let ConstData::Fmim(FmimTag::Method, c, nat) = const_line.data else {
+        return None;
+    };
 
     let class = {
         let const_line = rp.cpool.get(c as usize)?;
-        let ConstData::Single(SingleTag::Class, c) = const_line.data else { return None; };
+        let ConstData::Single(SingleTag::Class, c) = const_line.data else {
+            return None;
+        };
         let const_line = rp.cpool.get(c as usize)?;
-        let ConstData::Utf8(utf_data) = &const_line.data else { return None; };
+        let ConstData::Utf8(utf_data) = &const_line.data else {
+            return None;
+        };
         utf_data.s.to_string()
     };
 
     let const_line = rp.cpool.get(nat as usize)?;
-    let ConstData::Nat(met, sig) = const_line.data else { return None; };
+    let ConstData::Nat(met, sig) = const_line.data else {
+        return None;
+    };
 
     let method = {
         let const_line = rp.cpool.get(met as usize)?;
-        let ConstData::Utf8(utf_data) = &const_line.data else { return None; };
+        let ConstData::Utf8(utf_data) = &const_line.data else {
+            return None;
+        };
         utf_data.s.to_string()
     };
 
     let signature = {
         let const_line = rp.cpool.get(sig as usize)?;
-        let ConstData::Utf8(utf_data) = &const_line.data else { return None; };
+        let ConstData::Utf8(utf_data) = &const_line.data else {
+            return None;
+        };
         utf_data.s.to_string()
     };
 
@@ -197,24 +193,39 @@ fn find_method_description(rp: &RefPrinter<'_>, method_id: u16) -> Option<Method
         None
     };
 
-    Some(MethodDescription { class, method, signature, signature_kind })
+    Some(MethodDescription {
+        class,
+        method,
+        signature,
+        signature_kind,
+    })
 }
 
 fn find_utf_ldc(rp: &RefPrinter<'_>, id: u16) -> Option<String> {
     let const_line = rp.cpool.get(id as usize)?;
-    let ConstData::Single(SingleTag::String, idx) = const_line.data else { return None; };
+    let ConstData::Single(SingleTag::String, idx) = const_line.data else {
+        return None;
+    };
     let const_line = rp.cpool.get(idx as usize)?;
-    let ConstData::Utf8(utf_data) = &const_line.data else { return None; };
-    return Some(utf_data.s.to_string())
+    let ConstData::Utf8(utf_data) = &const_line.data else {
+        return None;
+    };
+    return Some(utf_data.s.to_string());
 }
 
-fn scan_for_color_defs(class: &Class, palette_color_meths: &PaletteColorMethods, filename: &str) {
+fn scan_for_named_color_defs(
+    class: &Class,
+    palette_color_meths: &PaletteColorMethods,
+    filename: &str,
+) {
     let rp = init_refprinter(&class.cp, &class.attrs);
 
     let all_meths = palette_color_meths.all();
 
     for method in &class.methods {
-        let Some(attr) = method.attrs.first() else { continue; };
+        let Some(attr) = method.attrs.first() else {
+            continue;
+        };
         let AttrBody::Code((code_1, _)) = &attr.body else {
             continue;
         };
@@ -222,8 +233,12 @@ fn scan_for_color_defs(class: &Class, palette_color_meths: &PaletteColorMethods,
         let bytecode = &code_1.bytecode;
 
         for (idx, (_, ix)) in bytecode.0.iter().enumerate() {
-            let Instr::Invokevirtual(method_id) = ix else { continue; };
-            let Some(method_descr) = find_method_description(&rp, *method_id) else { continue; };
+            let Instr::Invokevirtual(method_id) = ix else {
+                continue;
+            };
+            let Some(method_descr) = find_method_description(&rp, *method_id) else {
+                continue;
+            };
 
             for meth in &all_meths {
                 if method_descr == **meth {
@@ -237,7 +252,7 @@ fn scan_for_color_defs(class: &Class, palette_color_meths: &PaletteColorMethods,
                             Instr::Ldc(id) => {
                                 let text = find_utf_ldc(&rp, *id as u16);
                                 println!("{}: {:?}", filename, text);
-                            },
+                            }
                             other => {
                                 println!("{}: {:?}", filename, other);
                             }
@@ -254,19 +269,28 @@ fn scan_for_color_defs(class: &Class, palette_color_meths: &PaletteColorMethods,
 #[derive(Debug)]
 enum UsefulFileType {
     MainPalette,
+    RawColor,
     Init,
 }
 
 fn is_useful_file(class: &Class) -> Option<UsefulFileType> {
-    let mtch = has_any_string_in_constant_pool(class, &[PALETTE_ANCHOR, INIT_ANCHOR])?;
+    if let Some(mtch) = has_any_string_in_constant_pool(class, &[PALETTE_ANCHOR, INIT_ANCHOR]) {
+        let useful_file_type = match mtch {
+            PALETTE_ANCHOR => UsefulFileType::MainPalette,
+            INIT_ANCHOR => UsefulFileType::Init,
+            _ => return None,
+        };
+        return Some(useful_file_type);
+    }
 
-    let useful_file_type = match mtch {
-        PALETTE_ANCHOR => UsefulFileType::MainPalette,
-        INIT_ANCHOR => UsefulFileType::Init,
-        _ => return None,
-    };
-
-    Some(useful_file_type)
+    if let Some(float) = has_any_double_in_constant_pool(class, &[0.666333]) {
+        return if float == 0.666333 {
+            Some(UsefulFileType::RawColor)
+        } else {
+            None
+        };
+    }
+    return None;
 }
 
 #[derive(Debug)]
@@ -275,23 +299,20 @@ struct PaletteColorMethods {
     rgb_i: MethodDescription,
     rgba_i: MethodDescription,
     rgb_f: MethodDescription,
-    ref_hsv_f: Option<MethodDescription>,
+    ref_hsv_f: MethodDescription,
     name_hsv_f: MethodDescription,
 }
 
 impl PaletteColorMethods {
     fn all(&self) -> Vec<&MethodDescription> {
-        let mut out = vec![
+        vec![
             &self.grayscale_i,
             &self.rgb_i,
             &self.rgba_i,
             &self.rgb_f,
+            &self.ref_hsv_f,
             &self.name_hsv_f,
-        ];
-        if let Some(meth) = &self.ref_hsv_f {
-            out.push(meth);
-        }
-        out
+        ]
     }
 }
 
@@ -299,6 +320,9 @@ fn extract_palette_color_methods(class: &Class) -> Option<PaletteColorMethods> {
     println!("Searching color methods");
 
     let rp = init_refprinter(&class.cp, &class.attrs);
+
+    let class_name = class.cp.clsutf(class.this).and_then(parse_utf8)?;
+    println!("Class >>>>> {}", class_name);
 
     let main_palette_method = class.methods.iter().skip(1).next()?;
     let attr = main_palette_method.attrs.first()?;
@@ -310,7 +334,7 @@ fn extract_palette_color_methods(class: &Class) -> Option<PaletteColorMethods> {
 
     let invokes = bytecode.0.iter().filter_map(|(_, ix)| match ix {
         Instr::Invokevirtual(method_id) => Some(method_id),
-        _ => None
+        _ => None,
     });
 
     let find_method = |signature_start: &str| {
@@ -326,13 +350,21 @@ fn extract_palette_color_methods(class: &Class) -> Option<PaletteColorMethods> {
     };
 
     let grayscale_i = find_method("(Ljava/lang/String;I)")?;
+    let color_record_class_name = grayscale_i.signature.split_once("I)L").map(|(_, suffix)| suffix.strip_suffix(";")).flatten()?;
     let rgb_i = find_method("(Ljava/lang/String;III)")?;
     let rgba_i = find_method("(Ljava/lang/String;IIII)")?;
     let rgb_f = find_method("(Ljava/lang/String;FFF)")?;
-    let ref_hsv_f = find_method("(Ljava/lang/String;LduR;FFF)");
+    let ref_hsv_f = find_method(&format!("(Ljava/lang/String;L{};FFF)", color_record_class_name))?;
     let name_hsv_f = find_method("(Ljava/lang/String;Ljava/lang/String;FFF)")?;
 
-    Some(PaletteColorMethods { grayscale_i, rgb_i, rgba_i, rgb_f, ref_hsv_f, name_hsv_f })
+    Some(PaletteColorMethods {
+        grayscale_i,
+        rgb_i,
+        rgba_i,
+        rgb_f,
+        ref_hsv_f,
+        name_hsv_f,
+    })
 }
 
 fn has_any_string_in_constant_pool<'a>(class: &Class, strings: &[&'a str]) -> Option<&'a str> {
@@ -341,6 +373,20 @@ fn has_any_string_in_constant_pool<'a>(class: &Class, strings: &[&'a str]) -> Op
             let parsed_string = String::from_utf8_lossy(txt.0);
             if let Some(found) = strings.iter().find(|pattern| **pattern == parsed_string) {
                 return Some(found);
+            }
+        }
+    }
+
+    None
+}
+
+fn has_any_double_in_constant_pool<'a>(class: &Class, doubles: &[f64]) -> Option<f64> {
+    for entry in &class.cp.0 {
+        if let classfile::cpool::Const::Double(double_as_u64) = entry {
+            let bytes = double_as_u64.to_be_bytes();
+            let double_as_f64 = f64::from_be_bytes(bytes);
+            if let Some(found) = doubles.iter().find(|dbl| **dbl == double_as_f64) {
+                return Some(*found)
             }
         }
     }
