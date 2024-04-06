@@ -9,7 +9,9 @@ use krakatau2::{
             code::Instr,
             cpool::ConstPool,
             parse::Class,
-        }, disassemble::refprinter::{ConstData, FmimTag, RefPrinter, SingleTag}, parse_utf8, ParserOptions
+        },
+        disassemble::refprinter::{ConstData, FmimTag, RefPrinter, SingleTag},
+        parse_utf8, ParserOptions,
     },
     zip,
 };
@@ -33,6 +35,7 @@ fn main() -> anyhow::Result<()> {
     };
 
     let mut palette_color_meths = None;
+    let mut raw_color_meths = None;
 
     let mut data = Vec::new();
 
@@ -61,7 +64,11 @@ fn main() -> anyhow::Result<()> {
                 }
                 UsefulFileType::RawColor => {
                     println!("Found raw color: {}", file_name);
-                },
+                    if let Some(methods) = extract_raw_color_methods(&class) {
+                        println!("{:#?}", methods);
+                        raw_color_meths = Some(methods);
+                    }
+                }
             }
         }
         progress_bar.inc(1);
@@ -139,7 +146,11 @@ fn init_refprinter<'a>(cp: &ConstPool<'a>, attrs: &'a [Attribute<'a>]) -> RefPri
     rp
 }
 
-fn find_method_description(rp: &RefPrinter<'_>, method_id: u16) -> Option<MethodDescription> {
+fn find_method_description(
+    rp: &RefPrinter<'_>,
+    method_id: u16,
+    color_rec_name: Option<&str>,
+) -> Option<MethodDescription> {
     let const_line = rp.cpool.get(method_id as usize)?;
     let ConstData::Fmim(FmimTag::Method, c, nat) = const_line.data else {
         return None;
@@ -185,9 +196,18 @@ fn find_method_description(rp: &RefPrinter<'_>, method_id: u16) -> Option<Method
             "(Ljava/lang/String;III" => Some(Siii),
             "(Ljava/lang/String;IIII" => Some(Siiii),
             "(Ljava/lang/String;FFF" => Some(Sfff),
-            "(Ljava/lang/String;LduR;FFF" => Some(SRfff),
             "(Ljava/lang/String;Ljava/lang/String;FFF" => Some(SSfff),
-            _ => None,
+            x => {
+                if let Some(color_rec_name) = color_rec_name {
+                    if sig_start == &format!("(Ljava/lang/String;L{};FFF", color_rec_name) {
+                        Some(SRfff)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
         }
     } else {
         None
@@ -236,7 +256,7 @@ fn scan_for_named_color_defs(
             let Instr::Invokevirtual(method_id) = ix else {
                 continue;
             };
-            let Some(method_descr) = find_method_description(&rp, *method_id) else {
+            let Some(method_descr) = find_method_description(&rp, *method_id, None) else {
                 continue;
             };
 
@@ -303,6 +323,15 @@ struct PaletteColorMethods {
     name_hsv_f: MethodDescription,
 }
 
+#[derive(Debug)]
+struct RawColorMethods {
+    rgb_i: MethodDescription,
+    grayscale_i: MethodDescription,
+    rgb_f: MethodDescription,
+    rgba_f: MethodDescription,
+    rgb_d: MethodDescription,
+}
+
 impl PaletteColorMethods {
     fn all(&self) -> Vec<&MethodDescription> {
         vec![
@@ -316,8 +345,37 @@ impl PaletteColorMethods {
     }
 }
 
+fn extract_raw_color_methods(class: &Class) -> Option<RawColorMethods> {
+    println!("Searching raw color methods");
+
+    // let rp = init_refprinter(&class.cp, &class.attrs);
+
+    let class_name = class.cp.clsutf(class.this).and_then(parse_utf8)?;
+    println!("Class >>>>> {}", class_name);
+
+    for method in &class.methods {
+        println!("METH IDX: {}", method.name);
+        let Some(meth_name) = class.cp.utf8(method.name).and_then(parse_utf8) else { continue; };
+        println!("METH NAME: {}", meth_name);
+        let Some(attr) = method.attrs.first() else {
+            continue;
+        };
+        let AttrBody::Code((code_1, _)) = &attr.body else {
+            continue;
+        };
+        for (_, ix) in &code_1.bytecode.0 {
+            println!("IX: {:?}", ix);
+        }
+        println!("---");
+    }
+
+    todo!();
+
+    None
+}
+
 fn extract_palette_color_methods(class: &Class) -> Option<PaletteColorMethods> {
-    println!("Searching color methods");
+    println!("Searching palette color methods");
 
     let rp = init_refprinter(&class.cp, &class.attrs);
 
@@ -337,10 +395,10 @@ fn extract_palette_color_methods(class: &Class) -> Option<PaletteColorMethods> {
         _ => None,
     });
 
-    let find_method = |signature_start: &str| {
+    let find_method = |signature_start: &str, color_rec_name: Option<&str>| {
         let mut invokes = invokes.clone();
         invokes.find_map(|method_id| {
-            let method_descr = find_method_description(&rp, *method_id)?;
+            let method_descr = find_method_description(&rp, *method_id, color_rec_name)?;
             if method_descr.signature.starts_with(signature_start) {
                 Some(method_descr)
             } else {
@@ -349,13 +407,23 @@ fn extract_palette_color_methods(class: &Class) -> Option<PaletteColorMethods> {
         })
     };
 
-    let grayscale_i = find_method("(Ljava/lang/String;I)")?;
-    let color_record_class_name = grayscale_i.signature.split_once("I)L").map(|(_, suffix)| suffix.strip_suffix(";")).flatten()?;
-    let rgb_i = find_method("(Ljava/lang/String;III)")?;
-    let rgba_i = find_method("(Ljava/lang/String;IIII)")?;
-    let rgb_f = find_method("(Ljava/lang/String;FFF)")?;
-    let ref_hsv_f = find_method(&format!("(Ljava/lang/String;L{};FFF)", color_record_class_name))?;
-    let name_hsv_f = find_method("(Ljava/lang/String;Ljava/lang/String;FFF)")?;
+    let grayscale_i = find_method("(Ljava/lang/String;I)", None)?;
+    let color_record_class_name = grayscale_i
+        .signature
+        .split_once("I)L")
+        .map(|(_, suffix)| suffix.strip_suffix(";"))
+        .flatten()?;
+    let rgb_i = find_method("(Ljava/lang/String;III)", Some(color_record_class_name))?;
+    let rgba_i = find_method("(Ljava/lang/String;IIII)", Some(color_record_class_name))?;
+    let rgb_f = find_method("(Ljava/lang/String;FFF)", Some(color_record_class_name))?;
+    let ref_hsv_f = find_method(
+        &format!("(Ljava/lang/String;L{};FFF)", color_record_class_name),
+        Some(color_record_class_name),
+    )?;
+    let name_hsv_f = find_method(
+        "(Ljava/lang/String;Ljava/lang/String;FFF)",
+        Some(color_record_class_name),
+    )?;
 
     Some(PaletteColorMethods {
         grayscale_i,
@@ -386,7 +454,7 @@ fn has_any_double_in_constant_pool<'a>(class: &Class, doubles: &[f64]) -> Option
             let bytes = double_as_u64.to_be_bytes();
             let double_as_f64 = f64::from_be_bytes(bytes);
             if let Some(found) = doubles.iter().find(|dbl| **dbl == double_as_f64) {
-                return Some(*found)
+                return Some(*found);
             }
         }
     }
