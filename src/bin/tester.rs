@@ -1,7 +1,7 @@
 use std::{collections::HashMap, env, fmt::Debug, fs, io::Read};
 
 use colorsys::{ColorTransform, Rgb, SaturationInSpace};
-use indicatif::ProgressBar;
+// use indicatif::ProgressBar;
 use krakatau2::{
     lib::{
         classfile::{
@@ -22,6 +22,25 @@ use krakatau2::{
 const PALETTE_ANCHOR: &str = "Device Tint Future";
 // Contain time-bomb initialization around constant 5000
 const INIT_ANCHOR: &str = "Apply Device Remote Control Changes To All Devices";
+// Other color anchor
+// const OTHER_ANCHOR: &str = "Loop Region Fill";
+// const OTHER_ANCHOR_2: &str = "Cue Marker Selected Fill";
+
+// Timeline playing position!
+// For 5.2 Beta 1 it's located at com/bitwig/flt/widget/core/timeline/renderer/mH
+// method looks like this:
+//
+// public void kHn(VjN vjN, double d) {
+//     YCn yCn;
+//     double d2 = this.kHn(d);
+//     if (d2 >= (double)((yCn = vjN.kp_()).SWO() - 5L) && d2 <= (double)(yCn.FrR() + 5L)) {
+//         vjN.EvR(HyF.kHn); <----- THIIIIIIIIIIIS IS BLACK CONSTANT USAGE!
+//         vjN.L1z(vjN.kHn(1L));
+//         vjN.ajg(d2, 0.0);
+//         vjN.kHn(d2, (double)this.kHn.GXQ());
+//         vjN.Q1d();
+//     }
+// }
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = env::args().collect();
@@ -36,11 +55,11 @@ fn main() -> anyhow::Result<()> {
     };
 
     let mut palette_color_meths = None;
-    // let mut raw_color_meths = None;
+    let mut raw_color_meths = None;
 
     let mut data = Vec::new();
 
-    let progress_bar = ProgressBar::new(file_names.len() as u64);
+    // let progress_bar = ProgressBar::new(file_names.len() as u64);
     for file_name in &file_names {
         let mut file = zip.by_name(file_name).unwrap();
 
@@ -56,7 +75,7 @@ fn main() -> anyhow::Result<()> {
                 UsefulFileType::MainPalette => {
                     println!("Found main palette: {}", file_name);
                     if let Some(methods) = extract_palette_color_methods(&class) {
-                        println!("{:#?}", methods);
+                        // println!("{:#?}", methods);
                         palette_color_meths = Some(methods);
                     }
                 }
@@ -65,20 +84,21 @@ fn main() -> anyhow::Result<()> {
                 }
                 UsefulFileType::RawColor => {
                     println!("Found raw color: {}", file_name);
-                    // if let Some(methods) = extract_raw_color_methods(&class) {
-                    //     println!("{:#?}", methods);
-                    //     raw_color_meths = Some(methods);
-                    // }
+                    if let Some(methods) = extract_raw_color_methods(&class) {
+                        println!("{:#?}", methods);
+                        raw_color_meths = Some(methods);
+                    }
                 }
             }
         }
-        progress_bar.inc(1);
+        // progress_bar.inc(1);
         drop(file);
     }
-    progress_bar.finish();
+    // progress_bar.finish();
+    println!("------------");
 
     if let Some(palette_color_meths) = palette_color_meths {
-        for file_name in file_names {
+        for file_name in &file_names {
             let mut file = zip.by_name(&file_name).unwrap();
 
             data.clear();
@@ -408,8 +428,8 @@ fn scan_for_named_color_defs(
                                     known_colors.insert(color_name.clone(), components);
                                 }
                             }
-                            other => {
-                                println!("{}: {:?}", filename, other);
+                            _other => {
+                                // println!("{}: {:?}", filename, other);
                             }
                         }
                     } else {
@@ -486,7 +506,7 @@ fn extract_raw_color_methods(class: &Class) -> Option<RawColorMethods> {
     // let rp = init_refprinter(&class.cp, &class.attrs);
 
     let class_name = class.cp.clsutf(class.this).and_then(parse_utf8)?;
-    println!("Class >>>>> {}", class_name);
+    // println!("Class >>>>> {}", class_name);
 
     for method in &class.methods {
         println!("METH IDX: {}", method.name);
@@ -512,12 +532,12 @@ fn extract_raw_color_methods(class: &Class) -> Option<RawColorMethods> {
 }
 
 fn extract_palette_color_methods(class: &Class) -> Option<PaletteColorMethods> {
-    println!("Searching palette color methods");
+    // println!("Searching palette color methods");
 
     let rp = init_refprinter(&class.cp, &class.attrs);
 
     let class_name = class.cp.clsutf(class.this).and_then(parse_utf8)?;
-    println!("Class >>>>> {}", class_name);
+    // println!("Class >>>>> {}", class_name);
 
     let main_palette_method = class.methods.iter().skip(1).next()?;
     let attr = main_palette_method.attrs.first()?;
