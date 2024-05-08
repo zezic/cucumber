@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::{fs::File, collections::HashMap};
+use std::fs::File;
 use std::io::BufReader;
 
 use xml::reader::{EventReader, XmlEvent};
@@ -44,16 +44,20 @@ pub fn parse_ask(filename: &str) -> std::io::Result<AbletonColorDefs> {
     for e in parser {
         let event = e.unwrap();
         match event {
-            XmlEvent::StartElement { name, attributes, .. } => {
+            XmlEvent::StartElement {
+                name, attributes, ..
+            } => {
                 depth += 1;
                 match depth {
                     3 => {
-                        if NON_COLORS.contains(&name.to_string().as_str()) { continue; }
+                        if NON_COLORS.contains(&name.to_string().as_str()) {
+                            continue;
+                        }
                         if !color_name.is_empty() {
                             color_defs.insert(color_name, (r, g, b, a));
                         }
                         color_name = name.to_string();
-                    },
+                    }
                     4 => {
                         let attr = &attributes.first().unwrap().value;
                         let val = match attr.parse::<f32>() {
@@ -68,7 +72,7 @@ pub fn parse_ask(filename: &str) -> std::io::Result<AbletonColorDefs> {
                             "G" => g = val,
                             "B" => b = val,
                             "Alpha" => a = val,
-                            _ => {},
+                            _ => {}
                         }
                     }
                     _ => {}
@@ -77,7 +81,7 @@ pub fn parse_ask(filename: &str) -> std::io::Result<AbletonColorDefs> {
             XmlEvent::EndElement { .. } => {
                 depth -= 1;
             }
-            _ => {},
+            _ => {}
         }
     }
 

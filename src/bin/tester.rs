@@ -1,12 +1,13 @@
-use std::{env, fmt::Debug, fs, io::Read};
+use std::{collections::HashMap, env, fmt::Debug, fs, io::Read};
 
+use colorsys::{ColorTransform, Rgb, SaturationInSpace};
 use indicatif::ProgressBar;
 use krakatau2::{
     lib::{
         classfile::{
             self,
             attrs::{AttrBody, Attribute},
-            code::Instr,
+            code::{Bytecode, Instr},
             cpool::ConstPool,
             parse::Class,
         },
@@ -35,7 +36,7 @@ fn main() -> anyhow::Result<()> {
     };
 
     let mut palette_color_meths = None;
-    let mut raw_color_meths = None;
+    // let mut raw_color_meths = None;
 
     let mut data = Vec::new();
 
@@ -64,10 +65,10 @@ fn main() -> anyhow::Result<()> {
                 }
                 UsefulFileType::RawColor => {
                     println!("Found raw color: {}", file_name);
-                    if let Some(methods) = extract_raw_color_methods(&class) {
-                        println!("{:#?}", methods);
-                        raw_color_meths = Some(methods);
-                    }
+                    // if let Some(methods) = extract_raw_color_methods(&class) {
+                    //     println!("{:#?}", methods);
+                    //     raw_color_meths = Some(methods);
+                    // }
                 }
             }
         }
@@ -77,7 +78,6 @@ fn main() -> anyhow::Result<()> {
     progress_bar.finish();
 
     if let Some(palette_color_meths) = palette_color_meths {
-        let progress_bar = ProgressBar::new(file_names.len() as u64);
         for file_name in file_names {
             let mut file = zip.by_name(&file_name).unwrap();
 
@@ -89,10 +89,8 @@ fn main() -> anyhow::Result<()> {
             };
 
             scan_for_named_color_defs(&class, &palette_color_meths, &file_name);
-            progress_bar.inc(1);
             drop(file);
         }
-        progress_bar.finish();
     }
 
     Ok(())
@@ -116,6 +114,59 @@ enum MethodSignatureKind {
     SSfff,
 }
 
+trait IxToInt {
+    fn to_int(&self) -> u8;
+}
+
+trait IxToFloat {
+    fn to_float(&self, refprinter: &RefPrinter) -> f32;
+}
+
+impl IxToInt for Instr {
+    fn to_int(&self) -> u8 {
+        match self {
+            Instr::Iconst0 => 0,
+            Instr::Iconst1 => 1,
+            Instr::Iconst2 => 2,
+            Instr::Iconst3 => 3,
+            Instr::Iconst4 => 4,
+            Instr::Iconst5 => 5,
+            Instr::Lconst0 => 0,
+            Instr::Lconst1 => 1,
+            Instr::Bipush(x) => *x as u8,
+            Instr::Sipush(x) => *x as u8,
+            x => unimplemented!("instr: {:?}", x),
+        }
+    }
+}
+
+impl IxToFloat for Instr {
+    fn to_float(&self, refprinter: &RefPrinter) -> f32 {
+        match self {
+            Instr::Fconst0 => 0.0,
+            Instr::Fconst1 => 1.0,
+            Instr::Fconst2 => 2.0,
+            Instr::Dconst0 => 0.0,
+            Instr::Dconst1 => 1.0,
+            Instr::Ldc(ind) => {
+                let data = refprinter.cpool.get(*ind as usize).unwrap();
+                match &data.data {
+                    ConstData::Prim(_prim_tag, text) => {
+                        match text.trim_end_matches("f").parse::<f32>() {
+                            Ok(val) => val,
+                            Err(err) => {
+                                panic!("err parse f32 [{}]: {}", text, err);
+                            }
+                        }
+                    }
+                    _ => unimplemented!(),
+                }
+            }
+            x => unimplemented!("instr: {:?}", x),
+        }
+    }
+}
+
 impl MethodSignatureKind {
     fn color_name_ix_offset(&self) -> usize {
         match self {
@@ -125,6 +176,73 @@ impl MethodSignatureKind {
             MethodSignatureKind::Sfff => 4,
             MethodSignatureKind::SRfff => 6,
             MethodSignatureKind::SSfff => 5,
+        }
+    }
+
+    fn extract_color_components(
+        &self,
+        idx: usize,
+        bytecode: &Bytecode,
+        refprinter: &RefPrinter,
+    ) -> ColorComponents {
+        let int = |offset: usize| bytecode.0.get(idx - offset).unwrap().1.to_int();
+        let float = |offset: usize| bytecode.0.get(idx - offset).unwrap().1.to_float(refprinter);
+        match self {
+            MethodSignatureKind::Si => ColorComponents::Grayscale(int(1)),
+            MethodSignatureKind::Siii => ColorComponents::Rgbi(int(3), int(2), int(1)),
+            MethodSignatureKind::Siiii => ColorComponents::Rgbai(int(4), int(3), int(2), int(1)),
+            MethodSignatureKind::Sfff => ColorComponents::Rgbf(float(3), float(2), float(1)),
+            MethodSignatureKind::SRfff => unimplemented!(),
+            MethodSignatureKind::SSfff => {
+                let ix = &bytecode.0.get(idx - 4).unwrap().1;
+                if let Instr::Ldc(ind) = ix {
+                    let text = find_utf_ldc(refprinter, *ind as u16);
+                    let h = float(3);
+                    let s = float(2);
+                    let v = float(1);
+                    if let Some(color_name) = text {
+                        ColorComponents::StringAndAdjust(color_name, h, s, v)
+                    } else {
+                        unimplemented!("string ref without text?: {:?}", ix);
+                    }
+                } else {
+                    unimplemented!("string ref with unexpected ix: {:?}", ix);
+                }
+            }
+        }
+    }
+}
+
+enum ColorComponents {
+    Grayscale(u8),
+    Rgbi(u8, u8, u8),
+    Rgbai(u8, u8, u8, u8),
+    Rgbf(f32, f32, f32),
+    RefAndAdjust(String, f32, f32, f32),
+    StringAndAdjust(String, f32, f32, f32),
+}
+
+impl ColorComponents {
+    fn to_rgb(&self, known_colors: &HashMap<String, ColorComponents>) -> (u8, u8, u8) {
+        match self {
+            ColorComponents::Grayscale(v) => (*v, *v, *v),
+            ColorComponents::Rgbi(r, g, b) => (*r, *g, *b),
+            ColorComponents::Rgbai(r, g, b, _a) => (*r, *g, *b),
+            ColorComponents::Rgbf(r, g, b) => {
+                ((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
+            }
+            ColorComponents::RefAndAdjust(_, _, _, _) => todo!(),
+            ColorComponents::StringAndAdjust(ref_name, h, s, v) => {
+                let Some(known) = known_colors.get(ref_name) else {
+                    panic!("Unknown color ref: {}", ref_name);
+                };
+                let (r, g, b) = known.to_rgb(&known_colors);
+                let mut rgb = Rgb::from((r, g, b));
+                rgb.adjust_hue(*h as f64);
+                rgb.saturate(SaturationInSpace::Hsl(*s as f64 * 100.));
+                rgb.lighten(*v as f64 * 100.);
+                rgb.into()
+            }
         }
     }
 }
@@ -224,6 +342,7 @@ fn find_method_description(
 fn find_utf_ldc(rp: &RefPrinter<'_>, id: u16) -> Option<String> {
     let const_line = rp.cpool.get(id as usize)?;
     let ConstData::Single(SingleTag::String, idx) = const_line.data else {
+        println!("!!!!!!>> {:?}", const_line.data);
         return None;
     };
     let const_line = rp.cpool.get(idx as usize)?;
@@ -238,6 +357,7 @@ fn scan_for_named_color_defs(
     palette_color_meths: &PaletteColorMethods,
     filename: &str,
 ) {
+    let mut known_colors = HashMap::new();
     let rp = init_refprinter(&class.cp, &class.attrs);
 
     let all_meths = palette_color_meths.all();
@@ -271,7 +391,22 @@ fn scan_for_named_color_defs(
                         match ix {
                             Instr::Ldc(id) => {
                                 let text = find_utf_ldc(&rp, *id as u16);
-                                println!("{}: {:?}", filename, text);
+                                let components =
+                                    sig_kind.extract_color_components(idx, bytecode, &rp);
+                                let (r, g, b) = components.to_rgb(&known_colors);
+                                use colored::Colorize;
+
+                                // If not in-place color name defined, then it's a method call inside other delegate method
+                                // so it's not interesting to us (I guess?).
+                                if let Some(color_name) = &text {
+                                    let debug_line = if (r as u16 + g as u16 + b as u16) > 384 {
+                                        format!("{}", color_name).black().on_truecolor(r, g, b)
+                                    } else {
+                                        format!("{}", color_name).on_truecolor(r, g, b)
+                                    };
+                                    println!("{}", debug_line);
+                                    known_colors.insert(color_name.clone(), components);
+                                }
                             }
                             other => {
                                 println!("{}: {:?}", filename, other);
@@ -355,7 +490,9 @@ fn extract_raw_color_methods(class: &Class) -> Option<RawColorMethods> {
 
     for method in &class.methods {
         println!("METH IDX: {}", method.name);
-        let Some(meth_name) = class.cp.utf8(method.name).and_then(parse_utf8) else { continue; };
+        let Some(meth_name) = class.cp.utf8(method.name).and_then(parse_utf8) else {
+            continue;
+        };
         println!("METH NAME: {}", meth_name);
         let Some(attr) = method.attrs.first() else {
             continue;

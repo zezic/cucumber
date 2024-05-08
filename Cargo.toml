@@ -3,12 +3,10 @@ name = "cucumber"
 version = "0.1.0"
 edition = "2021"
 
-[[bin]]
-name = "tester"
-path = "./src/tester.rs"
-
 [dependencies]
 anyhow = "1.0.72"
+colored = "2.1.0"
+colorsys = "0.6.7"
 indicatif = "0.17.6"
 krakatau2 = { path = "../Krakatau" }
 md5 = "0.7.0"

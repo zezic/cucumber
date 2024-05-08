@@ -69,7 +69,7 @@ fn main() -> Result<()> {
     let progress_bar = ProgressBar::new(zip.len() as u64);
 
     let rgba_method = {
-        let mut file = zip.by_name("dsj.class").unwrap();
+        let mut file = zip.by_name("daz.class").unwrap();
         class_buf.clear();
         class_buf.reserve(file.size() as usize);
         file.read_to_end(&mut class_buf)?;
@@ -92,7 +92,9 @@ fn main() -> Result<()> {
         class_buf.reserve(file.size() as usize);
         file.read_to_end(&mut class_buf)?;
 
-        if name.ends_with("dsj.class") || name.ends_with("oMz.class") || name.ends_with("theme/kX3.class") {
+        if name.ends_with("daz.class") ||
+            name.ends_with("myf.class") ||
+            name.ends_with("theme/irK.class") {
             let patched = patch_data(&name, &class_buf, &rgba_method, &mut html, &bw_abl_mapping)?;
             classes.push((name, patched));
         } else {
@@ -467,15 +469,15 @@ fn patch_data(name: &str, data: &[u8], rgba_method_desc: &MethodDescription, htm
     )
     .map_err(|err| anyhow!("Parse: {:?}", err))?;
 
-    if name.ends_with("dsj.class") || name.ends_with("kX3.class") {
-        let skip = if name.ends_with("dsj.class") { 1 } else if name.ends_with("kX3.class") { 4 } else { 0 };
+    if name.ends_with("daz.class") || name.ends_with("irK.class") {
+        let skip = if name.ends_with("daz.class") { 1 } else if name.ends_with("irK.class") { 4 } else { 0 };
         let color_defs = colorize_class(name, &mut class, skip, rgba_method_desc, bw_abl_mapping).unwrap();
         for def in color_defs {
             let def_html = def.as_html();
             html.push_str(&format!("{def_html}\n"));
         }
         Ok(reasm(&class)?)
-    } else if name.ends_with("oMz.class") {
+    } else if name.ends_with("myf.class") {
         patch_class(name, &mut class);
         Ok(reasm(&class)?)
     } else {
