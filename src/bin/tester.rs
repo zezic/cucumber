@@ -55,7 +55,7 @@ fn main() -> anyhow::Result<()> {
     };
 
     let mut palette_color_meths = None;
-    let mut raw_color_meths = None;
+    let mut raw_color_goodies = None;
 
     let mut data = Vec::new();
 
@@ -84,9 +84,9 @@ fn main() -> anyhow::Result<()> {
                 }
                 UsefulFileType::RawColor => {
                     println!("Found raw color: {}", file_name);
-                    if let Some(methods) = extract_raw_color_methods(&class) {
+                    if let Some(methods) = extract_raw_color_goodies(&class) {
                         println!("{:#?}", methods);
-                        raw_color_meths = Some(methods);
+                        raw_color_goodies = Some(methods);
                     }
                 }
             }
@@ -478,14 +478,19 @@ struct PaletteColorMethods {
     name_hsv_f: MethodDescription,
 }
 
+// Color methods and defined static colors (contain important black color)
 #[derive(Debug)]
-struct RawColorMethods {
+struct RawColorGoodies {
     rgb_i: MethodDescription,
     grayscale_i: MethodDescription,
     rgb_f: MethodDescription,
     rgba_f: MethodDescription,
     rgb_d: MethodDescription,
+    constants: RawColorConstants,
 }
+
+#[derive(Debug)]
+struct RawColorConstants {}
 
 impl PaletteColorMethods {
     fn all(&self) -> Vec<&MethodDescription> {
@@ -500,8 +505,8 @@ impl PaletteColorMethods {
     }
 }
 
-fn extract_raw_color_methods(class: &Class) -> Option<RawColorMethods> {
-    println!("Searching raw color methods");
+fn extract_raw_color_goodies(class: &Class) -> Option<RawColorGoodies> {
+    println!("Searching raw color goodies");
 
     // let rp = init_refprinter(&class.cp, &class.attrs);
 
@@ -509,11 +514,11 @@ fn extract_raw_color_methods(class: &Class) -> Option<RawColorMethods> {
     // println!("Class >>>>> {}", class_name);
 
     for method in &class.methods {
-        println!("METH IDX: {}", method.name);
+        // println!("METH IDX: {}", method.name);
         let Some(meth_name) = class.cp.utf8(method.name).and_then(parse_utf8) else {
             continue;
         };
-        println!("METH NAME: {}", meth_name);
+        // println!("METH NAME: {}", meth_name);
         let Some(attr) = method.attrs.first() else {
             continue;
         };
@@ -521,9 +526,9 @@ fn extract_raw_color_methods(class: &Class) -> Option<RawColorMethods> {
             continue;
         };
         for (_, ix) in &code_1.bytecode.0 {
-            println!("IX: {:?}", ix);
+            // println!("IX: {:?}", ix);
         }
-        println!("---");
+        // println!("---");
     }
 
     todo!();
