@@ -513,11 +513,16 @@ fn extract_raw_color_goodies(class: &Class) -> Option<RawColorGoodies> {
     let class_name = class.cp.clsutf(class.this).and_then(parse_utf8)?;
     // println!("Class >>>>> {}", class_name);
 
+    // for field in &class.fields {
+    //     dbg!(field);
+    // }
+
     for method in &class.methods {
         // println!("METH IDX: {}", method.name);
         let Some(meth_name) = class.cp.utf8(method.name).and_then(parse_utf8) else {
             continue;
         };
+        println!("METH: {}", meth_name);
         // println!("METH NAME: {}", meth_name);
         let Some(attr) = method.attrs.first() else {
             continue;
@@ -525,9 +530,20 @@ fn extract_raw_color_goodies(class: &Class) -> Option<RawColorGoodies> {
         let AttrBody::Code((code_1, _)) = &attr.body else {
             continue;
         };
-        for (_, ix) in &code_1.bytecode.0 {
-            // println!("IX: {:?}", ix);
-        }
+        match meth_name.as_str() {
+            "<clinit>" => {
+                todo!()
+            }
+            "<init>" => {
+                todo!()
+            }
+            _ => {
+                continue;
+            }
+        };
+        // for (_, ix) in &code_1.bytecode.0 {
+        //     // println!("IX: {:?}", ix);
+        // }
         // println!("---");
     }
 
