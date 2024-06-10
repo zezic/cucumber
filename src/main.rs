@@ -24,8 +24,6 @@ use krakatau2::{
 mod ask;
 mod mapping;
 
-const ANCHOR: &str = "Inverted Selected Borderless Button background";
-
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
 
@@ -193,18 +191,6 @@ fn init_refprinter<'a>(cp: &ConstPool<'a>, attrs: &'a [Attribute<'a>]) -> RefPri
 
 type MethodId = u16;
 
-fn find_rgb_method_in_data(data: &[u8]) -> Option<MethodDescription> {
-    let class = classfile::parse(
-        &data,
-        ParserOptions {
-            no_short_code_attr: true,
-        },
-    )
-    .map_err(|err| anyhow!("Parse: {:?}", err)).ok()?;
-    let (_id, desc) = find_method_by_sig(&class, "(Ljava/lang/String;III)")?;
-    Some(desc)
-}
-
 fn find_rgba_method_in_data(data: &[u8]) -> Option<MethodDescription> {
     let class = classfile::parse(
         &data,
@@ -244,6 +230,7 @@ fn find_method_by_sig(class: &Class<'_>, sig_start: &str) -> Option<(MethodId, M
 #[derive(Debug, Clone)]
 enum Color {
     Rgbu(u8, u8, u8),
+    #[allow(dead_code)]
     HsvfAdjustment(f32, f32, f32),
     Rgbau(u8, u8, u8, u8),
     Grayscale(u8),
@@ -259,7 +246,7 @@ impl ColorDef {
     fn as_html(&self) -> String {
         let color_style = match self.color {
             Color::Rgbu(r, g, b) => format!("rgb({r}, {g}, {b})"),
-            Color::HsvfAdjustment(h, s, v) => format!("gray"),
+            Color::HsvfAdjustment(..) => format!("gray"),
             Color::Rgbau(r, g, b, a) => {
                 let a_f = a as f32 / 255.0;
                 format!("rgba({r}, {g}, {b}, {a_f})")

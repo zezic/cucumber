@@ -11,7 +11,7 @@ use krakatau2::{
             cpool::ConstPool,
             parse::Class,
         },
-        disassemble::refprinter::{ConstData, FmimTag, RefPrinter, SingleTag},
+        disassemble::refprinter::{ConstData, FmimTag, PrimTag, RefPrinter, SingleTag},
         parse_utf8, ParserOptions,
     },
     zip,
@@ -47,12 +47,18 @@ const RAW_COLOR_ANCHOR: f64 = 0.666333;
 //     }
 // }
 
-fn main() -> anyhow::Result<()> {
+fn main() {
+    let _general_goodies = extract_general_goodies();
+    // println!("General goodies: {:#?}", general_goodies);
+}
+
+fn extract_general_goodies() -> anyhow::Result<GeneralGoodies> {
     let args: Vec<String> = env::args().collect();
     let input_jar = &args[1];
 
     let file = fs::File::open(input_jar)?;
     let mut zip = zip::ZipArchive::new(file)?;
+
 
     let file_names = zip.file_names().map(Into::into).collect::<Vec<String>>();
     const PARSER_OPTIONS: ParserOptions = ParserOptions {
@@ -61,10 +67,12 @@ fn main() -> anyhow::Result<()> {
 
     let mut palette_color_meths = None;
     let mut raw_color_goodies = None;
+    let mut timeline_color_const = None;
 
     let mut data = Vec::new();
 
     // let progress_bar = ProgressBar::new(file_names.len() as u64);
+    let mut init_class_name = None;
     for file_name in &file_names {
         let mut file = zip.by_name(file_name).unwrap();
 
@@ -86,14 +94,18 @@ fn main() -> anyhow::Result<()> {
                 }
                 UsefulFileType::Init => {
                     println!("Found init: {}", file_name);
+                    init_class_name = Some(file_name.clone());
                 }
                 UsefulFileType::RawColor => {
                     println!("Found raw color: {}", file_name);
                     if let Some(goodies) = extract_raw_color_goodies(&class) {
-                        println!("{:#?}", goodies);
                         raw_color_goodies = Some(goodies);
                     }
                 }
+                UsefulFileType::TimelineColorCnst(cnst_name) => {
+                    println!("Found time color const: {}", file_name);
+                    timeline_color_const = Some(cnst_name);
+                },
             }
         }
         // progress_bar.inc(1);
@@ -102,7 +114,11 @@ fn main() -> anyhow::Result<()> {
     // progress_bar.finish();
     println!("------------");
 
-    if let Some(palette_color_meths) = palette_color_meths {
+    let mut all_named_colors = Vec::new();
+
+    let mut known_colors = HashMap::new();
+
+    if let Some(palette_color_meths) = &palette_color_meths {
         for file_name in &file_names {
             let mut file = zip.by_name(&file_name).unwrap();
 
@@ -113,30 +129,45 @@ fn main() -> anyhow::Result<()> {
                 continue;
             };
 
-            scan_for_named_color_defs(&class, &palette_color_meths, &file_name);
+            let found = scan_for_named_color_defs(&class, &palette_color_meths, &file_name, &mut known_colors);
+            all_named_colors.extend(found);
             drop(file);
         }
     }
 
-    let empty_known_colors_dummy = HashMap::new();
+    for named_color in &all_named_colors {
+        debug_print_color(&named_color.class_name, &named_color.color_name, &named_color.components, &known_colors);
+    }
 
-    if let Some(raw_color_goodies) = raw_color_goodies {
-        for cnst in raw_color_goodies.constants.consts {
-
-                                let (r, g, b) = cnst.color_comps.to_rgb(&empty_known_colors_dummy);
-                                use colored::Colorize;
-                                let color_name = cnst.const_name;
-
-                                let debug_line = if (r as u16 + g as u16 + b as u16) > 384 {
-                                    format!("{}", color_name).black().on_truecolor(r, g, b)
-                                } else {
-                                    format!("{}", color_name).on_truecolor(r, g, b)
-                                };
-                                println!("{}", debug_line);
+    if let Some(raw_color_goodies) = &raw_color_goodies {
+        for cnst in &raw_color_goodies.constants.consts {
+            debug_print_color(&cnst.class_name, &cnst.const_name, &cnst.color_comps, &known_colors);
         }
     }
 
-    Ok(())
+    Ok(GeneralGoodies {
+        init_class: init_class_name.unwrap(),
+        named_colors: all_named_colors,
+        palette_color_methods: palette_color_meths.unwrap(),
+        raw_colors: raw_color_goodies.unwrap(),
+        timeline_color_const: timeline_color_const.unwrap()
+    })
+}
+
+#[derive(Debug)]
+struct GeneralGoodies {
+    init_class: String,
+    named_colors: Vec<NamedColor>,
+    palette_color_methods: PaletteColorMethods,
+    raw_colors: RawColorGoodies,
+    timeline_color_const: String,
+}
+
+#[derive(Debug)]
+struct NamedColor {
+    class_name: String,
+    color_name: String,
+    components: ColorComponents,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -264,7 +295,14 @@ impl MethodSignatureKind {
     ) -> ColorComponents {
         let int = |offset: usize| bytecode.0.get(idx - offset).unwrap().1.to_int();
         let float = |offset: usize| bytecode.0.get(idx - offset).unwrap().1.to_float(refprinter);
-        let double = |offset: usize| bytecode.0.get(idx - offset).unwrap().1.to_double(refprinter);
+        let double = |offset: usize| {
+            bytecode
+                .0
+                .get(idx - offset)
+                .unwrap()
+                .1
+                .to_double(refprinter)
+        };
         match self {
             MethodSignatureKind::Si => ColorComponents::Grayscale(int(1)),
             MethodSignatureKind::Siii => ColorComponents::Rgbi(int(3), int(2), int(1)),
@@ -287,13 +325,17 @@ impl MethodSignatureKind {
                     unimplemented!("string ref with unexpected ix: {:?}", ix);
                 }
             }
-            MethodSignatureKind::Ffff => ColorComponents::Rgbaf(float(4), float(3), float(2), float(1)),
-            MethodSignatureKind::Dddd => ColorComponents::Rgbad(double(4), double(3), double(2), double(1)),
+            MethodSignatureKind::Ffff => {
+                ColorComponents::Rgbaf(float(4), float(3), float(2), float(1))
+            }
+            MethodSignatureKind::Dddd => {
+                ColorComponents::Rgbad(double(4), double(3), double(2), double(1))
+            }
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum ColorComponents {
     Grayscale(u8),
     Rgbi(u8, u8, u8),
@@ -301,6 +343,7 @@ enum ColorComponents {
     Rgbf(f32, f32, f32),
     Rgbaf(f32, f32, f32, f32),
     Rgbad(f64, f64, f64, f64),
+    #[allow(dead_code)]
     RefAndAdjust(String, f32, f32, f32),
     StringAndAdjust(String, f32, f32, f32),
 }
@@ -328,8 +371,10 @@ impl ColorComponents {
             }
             ColorComponents::Rgbaf(r, g, b, _a) => {
                 ((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
-            },
-            ColorComponents::Rgbad(r, g, b, _a) => ((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8),
+            }
+            ColorComponents::Rgbad(r, g, b, _a) => {
+                ((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
+            }
         }
     }
 }
@@ -443,7 +488,7 @@ fn find_utf_ldc(rp: &RefPrinter<'_>, id: u16) -> Option<String> {
 fn find_const_name(rp: &RefPrinter<'_>, id: u16) -> Option<String> {
     let const_line = rp.cpool.get(id as usize)?;
 
-    let ConstData::Fmim(FmimTag::Field, c, nat) = const_line.data else {
+    let ConstData::Fmim(FmimTag::Field, _c, nat) = const_line.data else {
         return None;
     };
 
@@ -467,13 +512,98 @@ fn find_const_name(rp: &RefPrinter<'_>, id: u16) -> Option<String> {
     Some(const_name)
 }
 
+fn detect_timeline_color_const(
+    class: &Class,
+) -> Option<String> {
+    let rp = init_refprinter(&class.cp, &class.attrs);
+
+    let method = class.methods.iter().find_map(|method| {
+        let ConstData::Utf8(id) = &rp.cpool.get(method.desc as usize)?.data else {
+            return None;
+        };
+        let sig = id.s.to_string();
+        let sig_is_good = sig.starts_with("(Lcom/bitwig/graphics/") && sig.ends_with(";D)V");
+
+        if sig_is_good {
+            Some(method)
+        } else {
+            None
+        }
+    })?;
+
+    let Some(attr) = method.attrs.first() else {
+        return None;
+    };
+    let AttrBody::Code((code_1, _)) = &attr.body else {
+        return None;
+    };
+
+    let bytecode = &code_1.bytecode;
+
+    let mut count_of_5l = 0;
+    let mut has_dcmpg = false;
+    let mut has_ifgt = false;
+
+    let mut ifgt_idx = 0;
+
+    for (idx, (_, ix)) in bytecode.0.iter().enumerate() {
+        match ix {
+            Instr::Ldc2W(ind) => {
+                let ConstData::Prim(PrimTag::Long, b) = &rp.cpool.get(*ind as usize).unwrap().data else {
+                    continue;
+                };
+                if b == "5L" {
+                    count_of_5l += 1;
+                }
+            },
+            Instr::Dcmpg => {
+                if count_of_5l == 2 {
+                    has_dcmpg = true;
+                }
+            },
+            Instr::Ifgt(..) => {
+                if has_dcmpg {
+                    has_ifgt = true;
+                    ifgt_idx = idx;
+                    break;
+                }
+            },
+            _ => {}
+        }
+    }
+
+    if !has_ifgt {
+        return None;
+    }
+
+    let get_static_ix_idx = ifgt_idx + 2;
+    let Instr::Getstatic(id) = &bytecode.0.get(get_static_ix_idx)?.1 else {
+        return None;
+    };
+    let ConstData::Fmim(FmimTag::Field, _cls_id, fld_id) = &rp.cpool.get(*id as usize)?.data else {
+        return None;
+    };
+    let ConstData::Nat(field_cp_idx, _field_type_cp_idx) = &rp.cpool.get(*fld_id as usize)?.data else {
+        return None;
+    };
+    let ConstData::Utf8(utf) = &rp.cpool.get(*field_cp_idx as usize)?.data else {
+        return None;
+    };
+    let cnst_name = utf.s.to_string();
+    println!("Timeline color const is: {}", cnst_name);
+    Some(cnst_name)
+}
+
 fn scan_for_named_color_defs(
     class: &Class,
     palette_color_meths: &PaletteColorMethods,
     filename: &str,
-) {
-    let mut known_colors = HashMap::new();
+    known_colors: &mut HashMap<String, ColorComponents>,
+) -> Vec<NamedColor> {
+    let mut found = Vec::new();
     let rp = init_refprinter(&class.cp, &class.attrs);
+
+    let class_name = class.cp.clsutf(class.this).and_then(parse_utf8).unwrap();
 
     let all_meths = palette_color_meths.all();
 
@@ -508,18 +638,15 @@ fn scan_for_named_color_defs(
                                 let text = find_utf_ldc(&rp, *id as u16);
                                 let components =
                                     sig_kind.extract_color_components(idx, bytecode, &rp);
-                                let (r, g, b) = components.to_rgb(&known_colors);
-                                use colored::Colorize;
 
                                 // If not in-place color name defined, then it's a method call inside other delegate method
                                 // so it's not interesting to us (I guess?).
                                 if let Some(color_name) = &text {
-                                    let debug_line = if (r as u16 + g as u16 + b as u16) > 384 {
-                                        format!("{}", color_name).black().on_truecolor(r, g, b)
-                                    } else {
-                                        format!("{}", color_name).on_truecolor(r, g, b)
-                                    };
-                                    println!("{}", debug_line);
+                                    found.push(NamedColor {
+                                        class_name: class_name.clone(),
+                                        color_name: color_name.clone(),
+                                        components: components.clone(),
+                                    });
                                     known_colors.insert(color_name.clone(), components);
                                 }
                             }
@@ -534,6 +661,24 @@ fn scan_for_named_color_defs(
             }
         }
     }
+
+    found
+}
+
+fn debug_print_color(
+    class_name: &str,
+    color_name: &str,
+    components: &ColorComponents,
+    known_colors: &HashMap<String, ColorComponents>,
+) {
+    let (r, g, b) = components.to_rgb(&known_colors);
+    use colored::Colorize;
+    let debug_line = if (r as u16 + g as u16 + b as u16) > 384 {
+        format!("{}", color_name).black().on_truecolor(r, g, b)
+    } else {
+        format!("{}", color_name).on_truecolor(r, g, b)
+    };
+    println!("{} ({})", debug_line, class_name);
 }
 
 #[derive(Debug)]
@@ -541,6 +686,7 @@ enum UsefulFileType {
     MainPalette,
     RawColor,
     Init,
+    TimelineColorCnst(String),
 }
 
 fn is_useful_file(class: &Class) -> Option<UsefulFileType> {
@@ -555,6 +701,10 @@ fn is_useful_file(class: &Class) -> Option<UsefulFileType> {
 
     if let Some(_) = has_any_double_in_constant_pool(class, &[RAW_COLOR_ANCHOR]) {
         return Some(UsefulFileType::RawColor);
+    }
+
+    if let Some(cnst_name) = detect_timeline_color_const(class) {
+        return Some(UsefulFileType::TimelineColorCnst(cnst_name))
     }
 
     return None;
@@ -580,10 +730,7 @@ struct RawColorMethods {
 
 impl RawColorMethods {
     fn all(&self) -> Vec<&MethodDescription> {
-        vec![
-            &self.rgba_f,
-            &self.rgba_d,
-        ]
+        vec![&self.rgba_f, &self.rgba_d]
     }
 }
 
@@ -623,12 +770,9 @@ impl PaletteColorMethods {
 }
 
 fn extract_raw_color_goodies(class: &Class) -> Option<RawColorGoodies> {
-    println!("Searching raw color goodies");
-
     let rp = init_refprinter(&class.cp, &class.attrs);
 
     let class_name = class.cp.clsutf(class.this).and_then(parse_utf8)?;
-    println!("Class: {}", class_name);
 
     let mut rgbaf_desc = None;
     let mut rgbad_desc = None;
@@ -644,7 +788,7 @@ fn extract_raw_color_goodies(class: &Class) -> Option<RawColorGoodies> {
         let Some(attr) = method.attrs.first() else {
             continue;
         };
-        let AttrBody::Code((code_1, _)) = &attr.body else {
+        let AttrBody::Code((_code_1, _)) = &attr.body else {
             continue;
         };
         if meth_name != "<init>" {
@@ -652,7 +796,6 @@ fn extract_raw_color_goodies(class: &Class) -> Option<RawColorGoodies> {
         }
 
         let method_id = method.desc;
-        println!("INIT <{}>:", method_id);
 
         let const_line = rp.cpool.get(method_id as usize).unwrap();
         let ConstData::Utf8(utf_data) = &const_line.data else {
@@ -660,34 +803,25 @@ fn extract_raw_color_goodies(class: &Class) -> Option<RawColorGoodies> {
         };
         let sig = utf_data.s.to_string();
 
-        // let desc = find_method_description(&rp, method_id, None);
-        println!("SIG: {:?}", sig);
-
         match sig.as_str() {
             "(FFFF)V" => {
                 rgbaf_desc = Some(MethodDescription {
                     class: class_name.clone(),
                     method: "<init>".into(),
                     signature: "(FFFF)V".into(),
-                    signature_kind: Some(MethodSignatureKind::Ffff)
+                    signature_kind: Some(MethodSignatureKind::Ffff),
                 });
-            },
+            }
             "(DDDD)V" => {
                 rgbad_desc = Some(MethodDescription {
                     class: class_name.clone(),
                     method: "<init>".into(),
                     signature: "(DDDD)V".into(),
-                    signature_kind: Some(MethodSignatureKind::Dddd)
+                    signature_kind: Some(MethodSignatureKind::Dddd),
                 });
             }
             _ => {}
         }
-
-        let bytecode = &code_1.bytecode;
-        for (pos, ix) in &bytecode.0 {
-            // println!("{} {:?}", pos, ix);
-        }
-        println!();
     }
 
     let raw_color_methods = RawColorMethods {
@@ -715,21 +849,23 @@ fn extract_raw_color_goodies(class: &Class) -> Option<RawColorGoodies> {
             continue;
         }
 
-        let id = method.desc;
-        println!("CLINIT <{}>:", id);
-
         let bytecode = &code_1.bytecode;
         for (idx, (_pos, ix)) in (bytecode.0).iter().enumerate() {
             if let Instr::Invokespecial(method_id) = ix {
-                let Some(desc) = find_method_description(&rp, *method_id, None) else { continue; };
-                for raw_color_meth in [&raw_color_methods.rgba_f, &raw_color_methods.rgba_d] {
+                let Some(desc) = find_method_description(&rp, *method_id, None) else {
+                    continue;
+                };
+                for raw_color_meth in raw_color_methods.all() {
                     if &desc == raw_color_meth {
-                        let comps = raw_color_meth.signature_kind.as_ref().unwrap().extract_color_components(idx, bytecode, &rp);
+                        let comps = raw_color_meth
+                            .signature_kind
+                            .as_ref()
+                            .unwrap()
+                            .extract_color_components(idx, bytecode, &rp);
                         let Instr::Putstatic(const_idx) = bytecode.0.get(idx + 1).unwrap().1 else {
                             panic!("Expected const name (Putstatic)");
                         };
                         let const_name = find_const_name(&rp, const_idx).unwrap();
-                        println!("{} - {} - {:?}", class_name, const_name, comps);
                         consts.push(RawColorConst {
                             class_name: class_name.clone(),
                             const_name: const_name.clone(),
@@ -751,7 +887,10 @@ fn extract_raw_color_goodies(class: &Class) -> Option<RawColorGoodies> {
         // Static init, should contain statics initialization
     }
 
-    Some(RawColorGoodies { methods: raw_color_methods, constants: RawColorConstants { consts } })
+    Some(RawColorGoodies {
+        methods: raw_color_methods,
+        constants: RawColorConstants { consts },
+    })
 }
 
 fn extract_palette_color_methods(class: &Class) -> Option<PaletteColorMethods> {
@@ -759,7 +898,7 @@ fn extract_palette_color_methods(class: &Class) -> Option<PaletteColorMethods> {
 
     let rp = init_refprinter(&class.cp, &class.attrs);
 
-    let class_name = class.cp.clsutf(class.this).and_then(parse_utf8)?;
+    let _class_name = class.cp.clsutf(class.this).and_then(parse_utf8)?;
     // println!("Class >>>>> {}", class_name);
 
     let main_palette_method = class.methods.iter().skip(1).next()?;
