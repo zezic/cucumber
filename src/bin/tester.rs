@@ -67,7 +67,7 @@ fn extract_general_goodies() -> anyhow::Result<GeneralGoodies> {
 
     let mut palette_color_meths = None;
     let mut raw_color_goodies = None;
-    let mut timeline_color_const = None;
+    let mut timeline_color_ref = None;
 
     let mut data = Vec::new();
 
@@ -102,9 +102,13 @@ fn extract_general_goodies() -> anyhow::Result<GeneralGoodies> {
                         raw_color_goodies = Some(goodies);
                     }
                 }
-                UsefulFileType::TimelineColorCnst(cnst_name) => {
-                    println!("Found time color const: {}", file_name);
-                    timeline_color_const = Some(cnst_name);
+                UsefulFileType::TimelineColorCnst{ cpool_idx, cnst_name } => {
+                    println!("Found timeline color const: {}", file_name);
+                    timeline_color_ref = Some(TimelineColorReference {
+                        class_name: file_name.clone(),
+                        const_name: cnst_name,
+                        cpool_idx,
+                    });
                 },
             }
         }
@@ -150,8 +154,15 @@ fn extract_general_goodies() -> anyhow::Result<GeneralGoodies> {
         named_colors: all_named_colors,
         palette_color_methods: palette_color_meths.unwrap(),
         raw_colors: raw_color_goodies.unwrap(),
-        timeline_color_const: timeline_color_const.unwrap()
+        timeline_color_ref: timeline_color_ref.unwrap()
     })
+}
+
+#[derive(Debug)]
+struct TimelineColorReference {
+    class_name: String,
+    const_name: String,
+    cpool_idx: usize,
 }
 
 #[derive(Debug)]
@@ -160,7 +171,7 @@ struct GeneralGoodies {
     named_colors: Vec<NamedColor>,
     palette_color_methods: PaletteColorMethods,
     raw_colors: RawColorGoodies,
-    timeline_color_const: String,
+    timeline_color_ref: TimelineColorReference,
 }
 
 #[derive(Debug)]
@@ -514,7 +525,7 @@ fn find_const_name(rp: &RefPrinter<'_>, id: u16) -> Option<String> {
 
 fn detect_timeline_color_const(
     class: &Class,
-) -> Option<String> {
+) -> Option<(usize, String)> {
     let rp = init_refprinter(&class.cp, &class.attrs);
 
     let method = class.methods.iter().find_map(|method| {
@@ -590,8 +601,7 @@ fn detect_timeline_color_const(
         return None;
     };
     let cnst_name = utf.s.to_string();
-    println!("Timeline color const is: {}", cnst_name);
-    Some(cnst_name)
+    Some((*field_cp_idx as usize, cnst_name))
 }
 
 fn scan_for_named_color_defs(
@@ -686,7 +696,10 @@ enum UsefulFileType {
     MainPalette,
     RawColor,
     Init,
-    TimelineColorCnst(String),
+    TimelineColorCnst {
+        cpool_idx: usize,
+        cnst_name: String,
+    },
 }
 
 fn is_useful_file(class: &Class) -> Option<UsefulFileType> {
@@ -703,8 +716,8 @@ fn is_useful_file(class: &Class) -> Option<UsefulFileType> {
         return Some(UsefulFileType::RawColor);
     }
 
-    if let Some(cnst_name) = detect_timeline_color_const(class) {
-        return Some(UsefulFileType::TimelineColorCnst(cnst_name))
+    if let Some((cpool_idx, cnst_name)) = detect_timeline_color_const(class) {
+        return Some(UsefulFileType::TimelineColorCnst { cpool_idx, cnst_name })
     }
 
     return None;
