@@ -1,20 +1,19 @@
-use std::{collections::HashMap, env, fmt::Debug, fs, io::Read};
+use std::{collections::HashMap, env, fmt::Debug, fs, io::Read, path::Path};
+
+use anyhow::anyhow;
 
 use colorsys::{ColorTransform, Rgb, SaturationInSpace};
 // use indicatif::ProgressBar;
 use krakatau2::{
-    lib::{
-        classfile::{
+    file_output_util::Writer, lib::{
+        assemble, classfile::{
             self,
             attrs::{AttrBody, Attribute},
-            code::{Bytecode, Instr},
-            cpool::ConstPool,
+            code::{Bytecode, Instr, Pos},
+            cpool::{BStr, Const, ConstPool},
             parse::Class,
-        },
-        disassemble::refprinter::{ConstData, FmimTag, PrimTag, RefPrinter, SingleTag},
-        parse_utf8, ParserOptions,
-    },
-    zip,
+        }, disassemble::refprinter::{ConstData, FmimTag, PrimTag, RefPrinter, SingleTag}, parse_utf8, AssemblerOptions, DisassemblerOptions, ParserOptions
+    }, zip::{self, ZipArchive}
 };
 
 // Will search constant pool for that (inside Utf8 entry)
@@ -47,23 +46,238 @@ const RAW_COLOR_ANCHOR: f64 = 0.666333;
 //     }
 // }
 
-fn main() {
-    let _general_goodies = extract_general_goodies();
-    // println!("General goodies: {:#?}", general_goodies);
-}
-
-fn extract_general_goodies() -> anyhow::Result<GeneralGoodies> {
+fn main() -> anyhow::Result<()> {
     let args: Vec<String> = env::args().collect();
     let input_jar = &args[1];
+    let output_jar = &args[2];
 
     let file = fs::File::open(input_jar)?;
     let mut zip = zip::ZipArchive::new(file)?;
 
+    let mut general_goodies = extract_general_goodies(&mut zip)?;
 
-    let file_names = zip.file_names().map(Into::into).collect::<Vec<String>>();
+    let colors_to_randomize = general_goodies.named_colors.clone();
+
+    let mut patched_classes = HashMap::new();
+
+    for clr in colors_to_randomize {
+        let file_name_w_ext = format!("{}.class", clr.class_name);
+        let buffer = match patched_classes.remove(&file_name_w_ext) {
+            Some(patched) => patched,
+            None => {
+                let mut file = zip.by_name(&file_name_w_ext)?;
+                let mut buffer = Vec::new();
+                file.read_to_end(&mut buffer)?;
+                buffer
+            }
+        };
+
+        let mut class = classfile::parse(
+            &buffer,
+            ParserOptions {
+                no_short_code_attr: true,
+            },
+        )
+        .map_err(|err| anyhow!("Parse: {:?}", err))?;
+
+        if replace_named_color(
+            &mut class,
+            &clr.color_name,
+            ColorComponents::Rgbai(
+                rand::random(),
+                rand::random(),
+                rand::random(),
+                clr.components.alpha().unwrap_or(255),
+            ),
+            &mut general_goodies.named_colors,
+            &general_goodies.palette_color_methods,
+        ).is_none() {
+            println!("failed to replace in {}", file_name_w_ext);
+        }
+
+        let new_buffer = reasm(&file_name_w_ext, &class)?;
+        patched_classes.insert(file_name_w_ext, new_buffer);
+    }
+
+    let mut writer = Writer::new(Path::new(output_jar))?;
+
+    for i in 0..zip.len() {
+        let mut file = zip.by_index(i)?;
+        let name = file.name().to_owned();
+
+        let buffer = match patched_classes.remove(&name) {
+            Some(patched) => patched,
+            None => {
+                let mut buffer = Vec::new();
+                file.read_to_end(&mut buffer)?;
+                buffer
+            }
+        };
+
+        writer.write(Some(&name), &buffer)?;
+    }
+
+    Ok(())
+}
+
+fn reasm(fname: &str, class: &Class<'_>) -> anyhow::Result<Vec<u8>> {
+    let mut out = Vec::new();
+    krakatau2::lib::disassemble::disassemble(
+        &mut out,
+        &class,
+        DisassemblerOptions { roundtrip: true },
+    )?;
+
+    let source = std::str::from_utf8(&out)?;
+    let mut assembled =
+        assemble(source, AssemblerOptions {}).map_err(|err| {
+            err.display(fname, source);
+            anyhow!("Asm: {:?}", err)
+        })?;
+    let (_name, data) = assembled.pop().unwrap();
+
+    Ok(data)
+}
+
+fn find_method_by_sig(class: &Class<'_>, sig_start: &str) -> Option<(u16, MethodDescription)> {
+    let rp = init_refprinter(&class.cp, &class.attrs);
+
+    let method = class.methods.iter().skip(1).next();
+    let method = method?;
+
+    let attr = method.attrs.first()?;
+    let classfile::attrs::AttrBody::Code((code_1, _code_2)) = &attr.body else { return None; };
+    let bytecode = &code_1.bytecode;
+
+    for (_pos, ix) in &bytecode.0 {
+        if let Instr::Invokevirtual(method_id) = &ix {
+            let method_descr = find_method_description(&rp, *method_id, None)?;
+            if method_descr.signature.starts_with(sig_start) {
+                return Some((*method_id, method_descr));
+            }
+        }
+    }
+
+    None
+}
+
+fn replace_named_color<'a>(
+    class: &mut Class<'a>,
+    name: &str,
+    new_value: ColorComponents,
+    named_colors: &mut [NamedColor],
+    palette_color_meths: &'a PaletteColorMethods,
+) -> Option<()> {
+    if !matches!(new_value, ColorComponents::Rgbai(..)) {
+        todo!("Only Rgbai supported for the moment");
+    }
+    let named_color = named_colors
+        .iter_mut()
+        .find(|color| color.color_name == name)?;
+
+    let (rgbai_method_id, rgbai_method_desc) = match find_method_by_sig(class, &palette_color_meths.rgba_i.signature) {
+        Some(met) => met,
+        None => {
+            let rgbai_method_desc = &palette_color_meths.rgba_i;
+
+            let class_utf_id = class.cp.0.len();
+            class.cp.0.push(Const::Utf8(BStr(rgbai_method_desc.class.as_bytes())));
+
+            let method_utf_id = class.cp.0.len();
+            class.cp.0.push(Const::Utf8(BStr(rgbai_method_desc.method.as_bytes())));
+
+            let sig_utf_id = class.cp.0.len();
+            class.cp.0.push(Const::Utf8(BStr(rgbai_method_desc.signature.as_bytes())));
+
+            let class_id = class.cp.0.len();
+            class.cp.0.push(Const::Class(class_utf_id as u16));
+
+            let name_and_type_id = class.cp.0.len();
+            class.cp.0.push(Const::NameAndType(method_utf_id as u16, sig_utf_id as u16));
+
+            let method_id = class.cp.0.len();
+            class.cp.0.push(Const::Method(class_id as u16, name_and_type_id as u16));
+
+            (method_id as u16, rgbai_method_desc.clone())
+        }
+    };
+
+
+    let rp = init_refprinter(&class.cp, &class.attrs);
+
+    let old_desc = palette_color_meths.from_components(&named_color.components);
+
+    let method = class.methods.get_mut(named_color.method_idx)?;
+
+
+    let attr = method.attrs.first_mut()?;
+    let classfile::attrs::AttrBody::Code((code_1, _code_2)) = &mut attr.body else {
+        return None;
+    };
+    if code_1.stack < 7 {
+        code_1.stack = 7;
+    }
+    let bytecode = &mut code_1.bytecode;
+    let mut old_bytecode = bytecode.0.drain(..);
+    let mut new_bytecode: Vec<(Pos, Instr)> = vec![];
+    let mut pos_gen = 0..;
+
+    let mut ready = false;
+
+    while let Some((_, ix)) = old_bytecode.next() {
+        new_bytecode.push((Pos(pos_gen.next()?), ix));
+        if ready {
+            continue;
+        }
+
+        if let Instr::Ldc(id) = new_bytecode.last()?.1 {
+            let Some(text) = find_utf_ldc(&rp, id as u16) else {
+                continue;
+            };
+            if text == name {
+                loop {
+                    let ix = old_bytecode.next().unwrap();
+                    if let Instr::Invokevirtual(method_id) = ix.1 {
+                        let desc = find_method_description(&rp, method_id, None).unwrap();
+                        if desc.signature == old_desc.signature {
+                            break;
+                        }
+                    }
+                }
+                let ixs_to_push = new_value.to_ixs();
+                for ix in ixs_to_push {
+                    new_bytecode.push((Pos(pos_gen.next()?), ix));
+                }
+
+                // Now invoke correct method instead of old
+                new_bytecode.push((Pos(pos_gen.next()?), Instr::Invokevirtual(rgbai_method_id)));
+                named_color.components = new_value.clone();
+                ready = true;
+            }
+        }
+    }
+    drop(old_bytecode);
+
+    bytecode.0 = new_bytecode;
+
+    for attr in &mut code_1.attrs {
+        let classfile::attrs::AttrBody::LineNumberTable(table) = &mut attr.body else {
+            continue;
+        };
+        table.clear();
+    }
+
+    Some(())
+}
+
+fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
+    zip: &mut ZipArchive<R>,
+) -> anyhow::Result<GeneralGoodies> {
     const PARSER_OPTIONS: ParserOptions = ParserOptions {
         no_short_code_attr: true,
     };
+
+    let file_names = zip.file_names().map(Into::into).collect::<Vec<String>>();
 
     let mut palette_color_meths = None;
     let mut raw_color_goodies = None;
@@ -102,14 +316,17 @@ fn extract_general_goodies() -> anyhow::Result<GeneralGoodies> {
                         raw_color_goodies = Some(goodies);
                     }
                 }
-                UsefulFileType::TimelineColorCnst{ cpool_idx, cnst_name } => {
+                UsefulFileType::TimelineColorCnst {
+                    cpool_idx,
+                    cnst_name,
+                } => {
                     println!("Found timeline color const: {}", file_name);
                     timeline_color_ref = Some(TimelineColorReference {
                         class_name: file_name.clone(),
                         const_name: cnst_name,
                         cpool_idx,
                     });
-                },
+                }
             }
         }
         // progress_bar.inc(1);
@@ -133,19 +350,34 @@ fn extract_general_goodies() -> anyhow::Result<GeneralGoodies> {
                 continue;
             };
 
-            let found = scan_for_named_color_defs(&class, &palette_color_meths, &file_name, &mut known_colors);
+            let found = scan_for_named_color_defs(
+                &class,
+                &palette_color_meths,
+                &file_name,
+                &mut known_colors,
+            );
             all_named_colors.extend(found);
             drop(file);
         }
     }
 
     for named_color in &all_named_colors {
-        debug_print_color(&named_color.class_name, &named_color.color_name, &named_color.components, &known_colors);
+        debug_print_color(
+            &named_color.class_name,
+            &named_color.color_name,
+            &named_color.components,
+            &known_colors,
+        );
     }
 
     if let Some(raw_color_goodies) = &raw_color_goodies {
         for cnst in &raw_color_goodies.constants.consts {
-            debug_print_color(&cnst.class_name, &cnst.const_name, &cnst.color_comps, &known_colors);
+            debug_print_color(
+                &cnst.class_name,
+                &cnst.const_name,
+                &cnst.color_comps,
+                &known_colors,
+            );
         }
     }
 
@@ -154,7 +386,7 @@ fn extract_general_goodies() -> anyhow::Result<GeneralGoodies> {
         named_colors: all_named_colors,
         palette_color_methods: palette_color_meths.unwrap(),
         raw_colors: raw_color_goodies.unwrap(),
-        timeline_color_ref: timeline_color_ref.unwrap()
+        timeline_color_ref: timeline_color_ref.unwrap(),
     })
 }
 
@@ -174,9 +406,10 @@ struct GeneralGoodies {
     timeline_color_ref: TimelineColorReference,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct NamedColor {
     class_name: String,
+    method_idx: usize,
     color_name: String,
     components: ColorComponents,
 }
@@ -199,6 +432,21 @@ enum MethodSignatureKind {
     SSfff,
     Ffff,
     Dddd,
+}
+
+impl MethodSignatureKind {
+    fn component_count(&self) -> usize {
+        match self {
+            MethodSignatureKind::Si => 1,
+            MethodSignatureKind::Siii => 3,
+            MethodSignatureKind::Siiii => 4,
+            MethodSignatureKind::Sfff => 3,
+            MethodSignatureKind::SRfff => 5,
+            MethodSignatureKind::SSfff => 4,
+            MethodSignatureKind::Ffff => 4,
+            MethodSignatureKind::Dddd => 4,
+        }
+    }
 }
 
 trait IxToInt {
@@ -360,6 +608,36 @@ enum ColorComponents {
 }
 
 impl ColorComponents {
+    fn alpha(&self) -> Option<u8> {
+        Some(match self {
+            ColorComponents::Grayscale(_) => 255,
+            ColorComponents::Rgbi(_, _, _) => 255,
+            ColorComponents::Rgbai(_, _, _, a) => *a,
+            ColorComponents::Rgbf(_, _, _) => 255,
+            ColorComponents::Rgbaf(_, _, _, a) => (a * 255.0) as u8,
+            ColorComponents::Rgbad(_, _, _, a) => (a * 255.0) as u8,
+            ColorComponents::RefAndAdjust(_, _, _, _) => return None,
+            ColorComponents::StringAndAdjust(_, _, _, _) => return None,
+        })
+    }
+
+    fn to_ixs(&self) -> Vec<Instr> {
+        match self {
+            ColorComponents::Rgbai(r, g, b, a) => {
+                let mut ixs = vec![];
+                for comp in [r, g, b, a] {
+                    if *comp > 127 {
+                        ixs.push(Instr::Sipush(*comp as i16));
+                    } else {
+                        ixs.push(Instr::Bipush(*comp as i8));
+                    }
+                }
+                ixs
+            }
+            _ => todo!(),
+        }
+    }
+
     fn to_rgb(&self, known_colors: &HashMap<String, ColorComponents>) -> (u8, u8, u8) {
         match self {
             ColorComponents::Grayscale(v) => (*v, *v, *v),
@@ -523,9 +801,7 @@ fn find_const_name(rp: &RefPrinter<'_>, id: u16) -> Option<String> {
     Some(const_name)
 }
 
-fn detect_timeline_color_const(
-    class: &Class,
-) -> Option<(usize, String)> {
+fn detect_timeline_color_const(class: &Class) -> Option<(usize, String)> {
     let rp = init_refprinter(&class.cp, &class.attrs);
 
     let method = class.methods.iter().find_map(|method| {
@@ -560,25 +836,26 @@ fn detect_timeline_color_const(
     for (idx, (_, ix)) in bytecode.0.iter().enumerate() {
         match ix {
             Instr::Ldc2W(ind) => {
-                let ConstData::Prim(PrimTag::Long, b) = &rp.cpool.get(*ind as usize).unwrap().data else {
+                let ConstData::Prim(PrimTag::Long, b) = &rp.cpool.get(*ind as usize).unwrap().data
+                else {
                     continue;
                 };
                 if b == "5L" {
                     count_of_5l += 1;
                 }
-            },
+            }
             Instr::Dcmpg => {
                 if count_of_5l == 2 {
                     has_dcmpg = true;
                 }
-            },
+            }
             Instr::Ifgt(..) => {
                 if has_dcmpg {
                     has_ifgt = true;
                     ifgt_idx = idx;
                     break;
                 }
-            },
+            }
             _ => {}
         }
     }
@@ -594,7 +871,8 @@ fn detect_timeline_color_const(
     let ConstData::Fmim(FmimTag::Field, _cls_id, fld_id) = &rp.cpool.get(*id as usize)?.data else {
         return None;
     };
-    let ConstData::Nat(field_cp_idx, _field_type_cp_idx) = &rp.cpool.get(*fld_id as usize)?.data else {
+    let ConstData::Nat(field_cp_idx, _field_type_cp_idx) = &rp.cpool.get(*fld_id as usize)?.data
+    else {
         return None;
     };
     let ConstData::Utf8(utf) = &rp.cpool.get(*field_cp_idx as usize)?.data else {
@@ -617,7 +895,7 @@ fn scan_for_named_color_defs(
 
     let all_meths = palette_color_meths.all();
 
-    for method in &class.methods {
+    for (method_idx, method) in class.methods.iter().enumerate() {
         let Some(attr) = method.attrs.first() else {
             continue;
         };
@@ -654,6 +932,7 @@ fn scan_for_named_color_defs(
                                 if let Some(color_name) = &text {
                                     found.push(NamedColor {
                                         class_name: class_name.clone(),
+                                        method_idx,
                                         color_name: color_name.clone(),
                                         components: components.clone(),
                                     });
@@ -696,10 +975,7 @@ enum UsefulFileType {
     MainPalette,
     RawColor,
     Init,
-    TimelineColorCnst {
-        cpool_idx: usize,
-        cnst_name: String,
-    },
+    TimelineColorCnst { cpool_idx: usize, cnst_name: String },
 }
 
 fn is_useful_file(class: &Class) -> Option<UsefulFileType> {
@@ -717,7 +993,10 @@ fn is_useful_file(class: &Class) -> Option<UsefulFileType> {
     }
 
     if let Some((cpool_idx, cnst_name)) = detect_timeline_color_const(class) {
-        return Some(UsefulFileType::TimelineColorCnst { cpool_idx, cnst_name })
+        return Some(UsefulFileType::TimelineColorCnst {
+            cpool_idx,
+            cnst_name,
+        });
     }
 
     return None;
@@ -779,6 +1058,19 @@ impl PaletteColorMethods {
             &self.ref_hsv_f,
             &self.name_hsv_f,
         ]
+    }
+
+    fn from_components(&self, comps: &ColorComponents) -> &MethodDescription {
+        match comps {
+            ColorComponents::Grayscale(_) => &self.grayscale_i,
+            ColorComponents::Rgbi(_, _, _) => &self.rgb_i,
+            ColorComponents::Rgbai(_, _, _, _) => &self.rgba_i,
+            ColorComponents::Rgbf(_, _, _) => &self.rgb_f,
+            ColorComponents::Rgbaf(_, _, _, _) => unreachable!(),
+            ColorComponents::Rgbad(_, _, _, _) => unreachable!(),
+            ColorComponents::RefAndAdjust(_, _, _, _) => &self.ref_hsv_f,
+            ColorComponents::StringAndAdjust(_, _, _, _) => &self.name_hsv_f,
+        }
     }
 }
 
