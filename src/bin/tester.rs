@@ -1,19 +1,24 @@
-use std::{collections::HashMap, env, fmt::Debug, fs, io::Read, path::Path};
+use std::{collections::HashMap, env, fmt::Debug, fs, io::Read, path::Path, time::Instant};
 
 use anyhow::anyhow;
 
 use colorsys::{ColorTransform, Rgb, SaturationInSpace};
 // use indicatif::ProgressBar;
 use krakatau2::{
-    file_output_util::Writer, lib::{
-        assemble, classfile::{
+    file_output_util::Writer,
+    lib::{
+        assemble,
+        classfile::{
             self,
             attrs::{AttrBody, Attribute},
             code::{Bytecode, Instr, Pos},
             cpool::{BStr, Const, ConstPool},
             parse::Class,
-        }, disassemble::refprinter::{ConstData, FmimTag, PrimTag, RefPrinter, SingleTag}, parse_utf8, AssemblerOptions, DisassemblerOptions, ParserOptions
-    }, zip::{self, ZipArchive}
+        },
+        disassemble::refprinter::{ConstData, FmimTag, PrimTag, RefPrinter, SingleTag},
+        parse_utf8, AssemblerOptions, DisassemblerOptions, ParserOptions,
+    },
+    zip::{self, ZipArchive},
 };
 
 // Will search constant pool for that (inside Utf8 entry)
@@ -47,6 +52,9 @@ const RAW_COLOR_ANCHOR: f64 = 0.666333;
 // }
 
 fn main() -> anyhow::Result<()> {
+    let pgm_start = Instant::now();
+    let start = Instant::now();
+
     let args: Vec<String> = env::args().collect();
     let input_jar = &args[1];
     let output_jar = &args[2];
@@ -55,6 +63,9 @@ fn main() -> anyhow::Result<()> {
     let mut zip = zip::ZipArchive::new(file)?;
 
     let mut general_goodies = extract_general_goodies(&mut zip)?;
+
+    println!("STAGE 1: {}", start.elapsed().as_millis());
+    let start = Instant::now();
 
     let colors_to_randomize = general_goodies.named_colors.clone();
 
@@ -91,13 +102,43 @@ fn main() -> anyhow::Result<()> {
             ),
             &mut general_goodies.named_colors,
             &general_goodies.palette_color_methods,
-        ).is_none() {
+        )
+        .is_none()
+        {
             println!("failed to replace in {}", file_name_w_ext);
         }
 
         let new_buffer = reasm(&file_name_w_ext, &class)?;
         patched_classes.insert(file_name_w_ext, new_buffer);
     }
+
+    {
+        let file_name_w_ext = general_goodies.timeline_color_ref.class_filename.clone();
+        let mut file = zip.by_name(&file_name_w_ext)?;
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer)?;
+
+        let mut class = classfile::parse(
+            &buffer,
+            ParserOptions {
+                no_short_code_attr: true,
+            },
+        )
+        .map_err(|err| anyhow!("Parse: {:?}", err))?;
+        use rand::prelude::SliceRandom;
+        let mut rng = rand::thread_rng();
+        let other_color = general_goodies
+            .raw_colors
+            .constants
+            .consts
+            .choose(&mut rng).unwrap();
+        switch_timeline_color(&mut class, &other_color.const_name, &mut general_goodies.timeline_color_ref);
+        let new_buffer = reasm(&file_name_w_ext, &class)?;
+        patched_classes.insert(file_name_w_ext, new_buffer);
+    }
+
+    println!("STAGE 2: {}", start.elapsed().as_millis());
+    let start = Instant::now();
 
     let mut writer = Writer::new(Path::new(output_jar))?;
 
@@ -116,6 +157,8 @@ fn main() -> anyhow::Result<()> {
 
         writer.write(Some(&name), &buffer)?;
     }
+    println!("STAGE 3: {}", start.elapsed().as_millis());
+    println!("TOTAL: {}", pgm_start.elapsed().as_millis());
 
     Ok(())
 }
@@ -129,11 +172,10 @@ fn reasm(fname: &str, class: &Class<'_>) -> anyhow::Result<Vec<u8>> {
     )?;
 
     let source = std::str::from_utf8(&out)?;
-    let mut assembled =
-        assemble(source, AssemblerOptions {}).map_err(|err| {
-            err.display(fname, source);
-            anyhow!("Asm: {:?}", err)
-        })?;
+    let mut assembled = assemble(source, AssemblerOptions {}).map_err(|err| {
+        err.display(fname, source);
+        anyhow!("Asm: {:?}", err)
+    })?;
     let (_name, data) = assembled.pop().unwrap();
 
     Ok(data)
@@ -146,7 +188,9 @@ fn find_method_by_sig(class: &Class<'_>, sig_start: &str) -> Option<(u16, Method
     let method = method?;
 
     let attr = method.attrs.first()?;
-    let classfile::attrs::AttrBody::Code((code_1, _code_2)) = &attr.body else { return None; };
+    let classfile::attrs::AttrBody::Code((code_1, _code_2)) = &attr.body else {
+        return None;
+    };
     let bytecode = &code_1.bytecode;
 
     for (_pos, ix) in &bytecode.0 {
@@ -159,6 +203,26 @@ fn find_method_by_sig(class: &Class<'_>, sig_start: &str) -> Option<(u16, Method
     }
 
     None
+}
+
+fn switch_timeline_color<'a>(
+    class: &mut Class<'a>,
+    new_const: &'a str,
+    timeline_color_ref: &mut TimelineColorReference,
+) -> Option<()> {
+    let utf_data_idx = class.cp.0.len();
+    class.cp.0.push(Const::Utf8(BStr(new_const.as_bytes())));
+
+    let nat_idx = class.cp.0.len();
+    class.cp.0.push(Const::NameAndType(utf_data_idx as u16, timeline_color_ref.field_type_cp_idx));
+
+    let Const::Field(_, old_nat_idx) = class.cp.0.get_mut(timeline_color_ref.fmim_idx as usize)? else {
+        panic!()
+    };
+    *old_nat_idx = nat_idx as u16;
+
+    timeline_color_ref.const_name = new_const.to_string();
+    Some(())
 }
 
 fn replace_named_color<'a>(
@@ -175,40 +239,54 @@ fn replace_named_color<'a>(
         .iter_mut()
         .find(|color| color.color_name == name)?;
 
-    let (rgbai_method_id, rgbai_method_desc) = match find_method_by_sig(class, &palette_color_meths.rgba_i.signature) {
-        Some(met) => met,
-        None => {
-            let rgbai_method_desc = &palette_color_meths.rgba_i;
+    let (rgbai_method_id, rgbai_method_desc) =
+        match find_method_by_sig(class, &palette_color_meths.rgba_i.signature) {
+            Some(met) => met,
+            None => {
+                let rgbai_method_desc = &palette_color_meths.rgba_i;
 
-            let class_utf_id = class.cp.0.len();
-            class.cp.0.push(Const::Utf8(BStr(rgbai_method_desc.class.as_bytes())));
+                let class_utf_id = class.cp.0.len();
+                class
+                    .cp
+                    .0
+                    .push(Const::Utf8(BStr(rgbai_method_desc.class.as_bytes())));
 
-            let method_utf_id = class.cp.0.len();
-            class.cp.0.push(Const::Utf8(BStr(rgbai_method_desc.method.as_bytes())));
+                let method_utf_id = class.cp.0.len();
+                class
+                    .cp
+                    .0
+                    .push(Const::Utf8(BStr(rgbai_method_desc.method.as_bytes())));
 
-            let sig_utf_id = class.cp.0.len();
-            class.cp.0.push(Const::Utf8(BStr(rgbai_method_desc.signature.as_bytes())));
+                let sig_utf_id = class.cp.0.len();
+                class
+                    .cp
+                    .0
+                    .push(Const::Utf8(BStr(rgbai_method_desc.signature.as_bytes())));
 
-            let class_id = class.cp.0.len();
-            class.cp.0.push(Const::Class(class_utf_id as u16));
+                let class_id = class.cp.0.len();
+                class.cp.0.push(Const::Class(class_utf_id as u16));
 
-            let name_and_type_id = class.cp.0.len();
-            class.cp.0.push(Const::NameAndType(method_utf_id as u16, sig_utf_id as u16));
+                let name_and_type_id = class.cp.0.len();
+                class
+                    .cp
+                    .0
+                    .push(Const::NameAndType(method_utf_id as u16, sig_utf_id as u16));
 
-            let method_id = class.cp.0.len();
-            class.cp.0.push(Const::Method(class_id as u16, name_and_type_id as u16));
+                let method_id = class.cp.0.len();
+                class
+                    .cp
+                    .0
+                    .push(Const::Method(class_id as u16, name_and_type_id as u16));
 
-            (method_id as u16, rgbai_method_desc.clone())
-        }
-    };
-
+                (method_id as u16, rgbai_method_desc.clone())
+            }
+        };
 
     let rp = init_refprinter(&class.cp, &class.attrs);
 
     let old_desc = palette_color_meths.from_components(&named_color.components);
 
     let method = class.methods.get_mut(named_color.method_idx)?;
-
 
     let attr = method.attrs.first_mut()?;
     let classfile::attrs::AttrBody::Code((code_1, _code_2)) = &mut attr.body else {
@@ -317,14 +395,18 @@ fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
                     }
                 }
                 UsefulFileType::TimelineColorCnst {
-                    cpool_idx,
+                    getstatic_ix_idx: cpool_idx,
+                    field_type_cp_idx,
+                    fmim_idx: class_cp_idx,
                     cnst_name,
                 } => {
                     println!("Found timeline color const: {}", file_name);
                     timeline_color_ref = Some(TimelineColorReference {
-                        class_name: file_name.clone(),
+                        class_filename: file_name.clone(),
                         const_name: cnst_name,
-                        cpool_idx,
+                        getstatic_ix_idx: cpool_idx,
+                        field_type_cp_idx,
+                        fmim_idx: class_cp_idx,
                     });
                 }
             }
@@ -392,9 +474,11 @@ fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
 
 #[derive(Debug)]
 struct TimelineColorReference {
-    class_name: String,
+    class_filename: String,
     const_name: String,
-    cpool_idx: usize,
+    getstatic_ix_idx: usize,
+    field_type_cp_idx: u16,
+    fmim_idx: u16,
 }
 
 #[derive(Debug)]
@@ -801,7 +885,7 @@ fn find_const_name(rp: &RefPrinter<'_>, id: u16) -> Option<String> {
     Some(const_name)
 }
 
-fn detect_timeline_color_const(class: &Class) -> Option<(usize, String)> {
+fn detect_timeline_color_const(class: &Class) -> Option<(usize, u16, u16, String)> {
     let rp = init_refprinter(&class.cp, &class.attrs);
 
     let method = class.methods.iter().find_map(|method| {
@@ -865,13 +949,13 @@ fn detect_timeline_color_const(class: &Class) -> Option<(usize, String)> {
     }
 
     let get_static_ix_idx = ifgt_idx + 2;
-    let Instr::Getstatic(id) = &bytecode.0.get(get_static_ix_idx)?.1 else {
+    let Instr::Getstatic(fmim_idx) = &bytecode.0.get(get_static_ix_idx)?.1 else {
         return None;
     };
-    let ConstData::Fmim(FmimTag::Field, _cls_id, fld_id) = &rp.cpool.get(*id as usize)?.data else {
+    let ConstData::Fmim(FmimTag::Field, _class_cp_idx, fld_id) = &rp.cpool.get(*fmim_idx as usize)?.data else {
         return None;
     };
-    let ConstData::Nat(field_cp_idx, _field_type_cp_idx) = &rp.cpool.get(*fld_id as usize)?.data
+    let ConstData::Nat(field_cp_idx, field_type_cp_idx) = &rp.cpool.get(*fld_id as usize)?.data
     else {
         return None;
     };
@@ -879,7 +963,7 @@ fn detect_timeline_color_const(class: &Class) -> Option<(usize, String)> {
         return None;
     };
     let cnst_name = utf.s.to_string();
-    Some((*field_cp_idx as usize, cnst_name))
+    Some((get_static_ix_idx, *field_type_cp_idx, *fmim_idx, cnst_name))
 }
 
 fn scan_for_named_color_defs(
@@ -975,7 +1059,11 @@ enum UsefulFileType {
     MainPalette,
     RawColor,
     Init,
-    TimelineColorCnst { cpool_idx: usize, cnst_name: String },
+    TimelineColorCnst { getstatic_ix_idx: usize, 
+        
+            field_type_cp_idx: u16,
+            fmim_idx: u16,
+        cnst_name: String },
 }
 
 fn is_useful_file(class: &Class) -> Option<UsefulFileType> {
@@ -992,9 +1080,11 @@ fn is_useful_file(class: &Class) -> Option<UsefulFileType> {
         return Some(UsefulFileType::RawColor);
     }
 
-    if let Some((cpool_idx, cnst_name)) = detect_timeline_color_const(class) {
+    if let Some((getstatic_ix_idx, field_type_cp_idx, fmim_idx, cnst_name)) = detect_timeline_color_const(class) {
         return Some(UsefulFileType::TimelineColorCnst {
-            cpool_idx,
+            getstatic_ix_idx,
+            field_type_cp_idx,
+            fmim_idx,
             cnst_name,
         });
     }
