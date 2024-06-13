@@ -239,7 +239,7 @@ fn replace_named_color<'a>(
         .iter_mut()
         .find(|color| color.color_name == name)?;
 
-    let (rgbai_method_id, rgbai_method_desc) =
+    let (rgbai_method_id, _rgbai_method_desc) =
         match find_method_by_sig(class, &palette_color_meths.rgba_i.signature) {
             Some(met) => met,
             None => {
@@ -395,7 +395,6 @@ fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
                     }
                 }
                 UsefulFileType::TimelineColorCnst {
-                    getstatic_ix_idx: cpool_idx,
                     field_type_cp_idx,
                     fmim_idx: class_cp_idx,
                     cnst_name,
@@ -404,7 +403,6 @@ fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
                     timeline_color_ref = Some(TimelineColorReference {
                         class_filename: file_name.clone(),
                         const_name: cnst_name,
-                        getstatic_ix_idx: cpool_idx,
                         field_type_cp_idx,
                         fmim_idx: class_cp_idx,
                     });
@@ -476,13 +474,13 @@ fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
 struct TimelineColorReference {
     class_filename: String,
     const_name: String,
-    getstatic_ix_idx: usize,
     field_type_cp_idx: u16,
     fmim_idx: u16,
 }
 
 #[derive(Debug)]
 struct GeneralGoodies {
+    #[allow(dead_code)]
     init_class: String,
     named_colors: Vec<NamedColor>,
     palette_color_methods: PaletteColorMethods,
@@ -516,21 +514,6 @@ enum MethodSignatureKind {
     SSfff,
     Ffff,
     Dddd,
-}
-
-impl MethodSignatureKind {
-    fn component_count(&self) -> usize {
-        match self {
-            MethodSignatureKind::Si => 1,
-            MethodSignatureKind::Siii => 3,
-            MethodSignatureKind::Siiii => 4,
-            MethodSignatureKind::Sfff => 3,
-            MethodSignatureKind::SRfff => 5,
-            MethodSignatureKind::SSfff => 4,
-            MethodSignatureKind::Ffff => 4,
-            MethodSignatureKind::Dddd => 4,
-        }
-    }
 }
 
 trait IxToInt {
@@ -885,7 +868,7 @@ fn find_const_name(rp: &RefPrinter<'_>, id: u16) -> Option<String> {
     Some(const_name)
 }
 
-fn detect_timeline_color_const(class: &Class) -> Option<(usize, u16, u16, String)> {
+fn detect_timeline_color_const(class: &Class) -> Option<(u16, u16, String)> {
     let rp = init_refprinter(&class.cp, &class.attrs);
 
     let method = class.methods.iter().find_map(|method| {
@@ -963,7 +946,7 @@ fn detect_timeline_color_const(class: &Class) -> Option<(usize, u16, u16, String
         return None;
     };
     let cnst_name = utf.s.to_string();
-    Some((get_static_ix_idx, *field_type_cp_idx, *fmim_idx, cnst_name))
+    Some((*field_type_cp_idx, *fmim_idx, cnst_name))
 }
 
 fn scan_for_named_color_defs(
@@ -1059,7 +1042,7 @@ enum UsefulFileType {
     MainPalette,
     RawColor,
     Init,
-    TimelineColorCnst { getstatic_ix_idx: usize, 
+    TimelineColorCnst { 
         
             field_type_cp_idx: u16,
             fmim_idx: u16,
@@ -1080,9 +1063,8 @@ fn is_useful_file(class: &Class) -> Option<UsefulFileType> {
         return Some(UsefulFileType::RawColor);
     }
 
-    if let Some((getstatic_ix_idx, field_type_cp_idx, fmim_idx, cnst_name)) = detect_timeline_color_const(class) {
+    if let Some((field_type_cp_idx, fmim_idx, cnst_name)) = detect_timeline_color_const(class) {
         return Some(UsefulFileType::TimelineColorCnst {
-            getstatic_ix_idx,
             field_type_cp_idx,
             fmim_idx,
             cnst_name,
@@ -1095,6 +1077,7 @@ fn is_useful_file(class: &Class) -> Option<UsefulFileType> {
 // Color methods and defined static colors (contain important black color)
 #[derive(Debug)]
 struct RawColorGoodies {
+    #[allow(dead_code)]
     methods: RawColorMethods,
     constants: RawColorConstants,
 }
