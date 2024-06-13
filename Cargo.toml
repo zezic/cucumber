@@ -1,14 +1,5 @@
-[package]
-name = "cucumber"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-anyhow = "1.0.72"
-colored = "2.1.0"
-colorsys = "0.6.7"
-indicatif = "0.17.6"
-krakatau2 = { path = "../Krakatau" }
-md5 = "0.7.0"
-rand = "0.8.5"
-xml-rs = "0.8.16"
+[workspace]
+resolver = "2"
+members = [
+    "cucumber",
+]
