@@ -1,9 +1,62 @@
 #[cfg(feature = "ssr")]
+use axum::{
+    extract::State,
+    response::{IntoResponse, Response},
+};
+#[cfg(feature = "ssr")]
+use axum::{body::Body as AxumBody, http::Request};
+
+#[cfg(feature = "ssr")]
+use garden::state::AppState;
+
+#[cfg(feature = "ssr")]
+use leptos::provide_context;
+
+#[cfg(feature = "ssr")]
+use garden::app::App;
+
+#[cfg(feature = "ssr")]
+use leptos_axum::handle_server_fns_with_context;
+
+#[cfg(feature = "ssr")]
+async fn server_fn_handler(
+    State(app_state): State<AppState>,
+    request: Request<AxumBody>,
+) -> impl IntoResponse {
+    handle_server_fns_with_context(
+        move || {
+            provide_context(app_state.garden_state.clone());
+        },
+        request,
+    )
+    .await
+}
+
+#[cfg(feature = "ssr")]
+async fn leptos_routes_handler(
+    State(app_state): State<AppState>,
+    req: Request<AxumBody>,
+) -> Response {
+    let handler = leptos_axum::render_route_with_context(
+        app_state.leptos_options.clone(),
+        app_state.routes.clone(),
+        move || {
+            provide_context(app_state.garden_state.clone());
+        },
+        App,
+    );
+    handler(req).await.into_response()
+}
+
+#[cfg(feature = "ssr")]
 #[tokio::main]
 async fn main() {
+    use std::sync::Arc;
+
     use axum::routing::get;
     use axum::Router;
     use garden::api::api_routes;
+    use garden::state::GardenState;
     use leptos::*;
     use leptos_axum::{generate_route_list, LeptosRoutes};
     use garden::app::*;
@@ -19,17 +72,22 @@ async fn main() {
     let addr = leptos_options.site_addr;
     let routes = generate_route_list(App);
 
-    async fn handler() -> &'static str {
-        "Hello, World!"
-    }
+    let app_state = AppState {
+        leptos_options,
+        garden_state: Arc::new(GardenState::default()),
+        routes: routes.clone(),
+    };
 
     // build our application with a route
     let app = Router::new()
-        .leptos_routes(&leptos_options, routes, App)
+        .route(
+            "/api/*fn_name",
+            get(server_fn_handler).post(server_fn_handler),
+        )
+        .leptos_routes_with_handler(routes, get(leptos_routes_handler))
         .nest("/api", api_routes())
-        .route("/hi", get(handler))
         .fallback(file_and_error_handler)
-        .with_state(leptos_options);
+        .with_state(app_state);
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     logging::log!("listening on http://{}", &addr);

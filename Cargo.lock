@@ -1195,6 +1195,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "entity"
+version = "0.1.0"
+dependencies = [
+ "sea-orm",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1443,14 +1450,17 @@ dependencies = [
 name = "garden"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "axum",
  "console_error_panic_hook",
  "dotenv",
+ "entity",
  "http 1.1.0",
  "leptos",
  "leptos_axum",
  "leptos_meta",
  "leptos_router",
+ "migration",
  "oauth-axum",
  "sea-orm",
  "serde",
@@ -1460,6 +1470,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "twitter-v2",
+ "uuid",
  "wasm-bindgen",
 ]
 
@@ -2521,6 +2532,8 @@ version = "0.1.0"
 dependencies = [
  "async-std",
  "sea-orm-migration",
+ "serde",
+ "strum_macros 0.26.4",
 ]
 
 [[package]]
@@ -4282,7 +4295,7 @@ version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "063e6045c0e62079840579a7e47a355ae92f60eb74daaf156fb1e84ba164e63f"
 dependencies = [
- "strum_macros",
+ "strum_macros 0.24.3",
 ]
 
 [[package]]
@@ -4302,6 +4315,19 @@ dependencies = [
  "quote",
  "rustversion",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.26.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c6bee85a5a24955dc440386795aa378cd9cf82acd5f764469152d2270e581be"
+dependencies = [
+ "heck 0.5.0",
+ "proc-macro2",
+ "quote",
+ "rustversion",
+ "syn 2.0.66",
 ]
 
 [[package]]

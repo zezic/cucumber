@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "cucumber",
+    "cucumber", "entity",
     "garden",
     "migration"
 ]
@@ -13,3 +13,7 @@ opt-level = 'z'
 lto = true
 codegen-units = 1
 panic = "abort"
+
+[workspace.dependencies]
+entity = { path = "entity" }
+migration = { path = "migration" }

@@ -7,7 +7,7 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-axum = { version = "0.7", optional = true }
+axum = { version = "0.7", optional = true, features = ["macros"] }
 console_error_panic_hook = "0.1"
 leptos = { version = "0.6", features = ["nightly"] }
 leptos_axum = { version = "0.6", optional = true }
@@ -21,11 +21,14 @@ thiserror = "1"
 tracing = { version = "0.1", optional = true }
 http = "1"
 sea-orm = { version = "0.12.15", features = ["sqlx-postgres", "runtime-tokio-rustls"], optional = true }
-# oauth-axum = { version = "0.1.2", optional = true }
 oauth-axum = { path = "../oauth-axum-fixed", optional = true }
 serde = { version = "1.0.203", features = ["derive"] }
 dotenv = "0.15.0"
 twitter-v2 = { version = "0.1.8", features = ["rustls-tls"], default-features = false, optional = true }
+entity = { workspace = true, optional = true }
+migration = { workspace = true, optional = true }
+anyhow = { version = "1.0.86", optional = true }
+uuid = { version = "1.8.0", features = ["v4"], optional = true }
 
 [features]
 hydrate = ["leptos/hydrate", "leptos_meta/hydrate", "leptos_router/hydrate"]
@@ -42,6 +45,10 @@ ssr = [
     "dep:sea-orm",
     "dep:oauth-axum",
     "dep:twitter-v2",
+    "dep:entity",
+    "dep:migration",
+    "dep:anyhow",
+    "dep:uuid",
 ]
 
 [package.metadata.leptos]
