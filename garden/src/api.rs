@@ -138,8 +138,8 @@ pub async fn callback(
 
     let token = jar
         .get("token")
-        .map(|cookie| cookie.to_string())
-        .map(|token| Uuid::from_str(&token).ok())
+        .map(|cookie| cookie.value())
+        .map(|token| Uuid::from_str(token).ok())
         .flatten();
 
     let logged_in_user = if let Some(token) = token {
