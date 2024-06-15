@@ -19,6 +19,9 @@ use garden::app::App;
 use leptos_axum::handle_server_fns_with_context;
 
 #[cfg(feature = "ssr")]
+use anyhow::Result;
+
+#[cfg(feature = "ssr")]
 async fn server_fn_handler(
     State(app_state): State<AppState>,
     request: Request<AxumBody>,
@@ -50,7 +53,7 @@ async fn leptos_routes_handler(
 
 #[cfg(feature = "ssr")]
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<()> {
     use std::sync::Arc;
 
     use axum::routing::get;
@@ -72,9 +75,13 @@ async fn main() {
     let addr = leptos_options.site_addr;
     let routes = generate_route_list(App);
 
+    dotenv::from_filename(".env").ok();
+
+    let garden_state = Arc::new(GardenState::new(&std::env::var("DATABASE_URL").expect("DATABASE_URL must be set")).await?);
+
     let app_state = AppState {
         leptos_options,
-        garden_state: Arc::new(GardenState::default()),
+        garden_state: garden_state.clone(),
         routes: routes.clone(),
     };
 
@@ -85,7 +92,7 @@ async fn main() {
             get(server_fn_handler).post(server_fn_handler),
         )
         .leptos_routes_with_handler(routes, get(leptos_routes_handler))
-        .nest("/api", api_routes())
+        .nest("/api", api_routes(garden_state))
         .fallback(file_and_error_handler)
         .with_state(app_state);
 
@@ -94,6 +101,8 @@ async fn main() {
     axum::serve(listener, app.into_make_service())
         .await
         .unwrap();
+
+    Ok(())
 }
 
 #[cfg(not(feature = "ssr"))]

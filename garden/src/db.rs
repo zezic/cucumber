@@ -2,7 +2,11 @@ use anyhow::{Context, Result, anyhow};
 use migration::{Migrator, MigratorTrait};
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use tracing::info;
+use uuid::Uuid;
 
+use crate::api::OauthInfo;
+
+#[derive(Clone)]
 pub struct Db {
     connection: DatabaseConnection,
 }
@@ -27,4 +31,25 @@ impl Db {
 
         Ok(Self { connection })
     }
+
+    pub async fn get_user_by_token(&self, token: Uuid) -> Option<entity::user::Model> {
+        todo!()
+    }
+
+    pub async fn create_user(&self, user_args: UserArgs) -> Result<i32> {
+        todo!()
+    }
+
+    pub async fn login_user(&self, user_id: i32) -> Result<Uuid> {
+        todo!()
+    }
+
+    pub async fn link_external_user(&self, info: OauthInfo, access_token: String, user_id: i32) -> Result<()> {
+        todo!()
+    }
+}
+
+pub struct UserArgs {
+    pub username: String,
+    pub display_name: String,
 }
