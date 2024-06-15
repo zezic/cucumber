@@ -1,12 +1,13 @@
 use std::str::FromStr;
 
-use leptos::{component, create_resource, logging, server, view, IntoView, ServerFnError, SignalGet};
+use leptos::{Await, Suspense};
+use leptos::{
+    component, create_resource, logging, server, view, IntoView, ServerFnError, SignalGet,
+};
 use leptos_use::{use_cookie, utils::FromToStringCodec};
 use serde::{Deserialize, Serialize};
-use leptos::SignalWith;
-use leptos::Suspense;
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct UserView {
     pub username: String,
     pub display_name: String,
@@ -17,10 +18,9 @@ pub struct UserView {
 #[server(GetMe, "/api")]
 pub async fn get_me() -> Result<UserView, ServerFnError> {
     use crate::state::garden_state;
+    use axum_extra::extract::CookieJar;
     use leptos_axum::extract;
-use axum_extra::extract::CookieJar;
-use uuid::Uuid;
-use axum_extra::extract::cookie::Cookie;
+    use uuid::Uuid;
 
     let jar: CookieJar = extract().await?;
 
@@ -28,9 +28,10 @@ use axum_extra::extract::cookie::Cookie;
         .get("token")
         .map(|cookie| cookie.value())
         .map(|token| Uuid::from_str(token).ok())
-        .flatten() else {
-            return Err(ServerFnError::ServerError("no token".into()))
-        };
+        .flatten()
+    else {
+        return Err(ServerFnError::ServerError("no token".into()));
+    };
 
     let garden_state = garden_state()?;
 
@@ -40,8 +41,9 @@ use axum_extra::extract::cookie::Cookie;
         show_display_name,
         bio,
         ..
-    }) = garden_state.db.get_user_by_token(token).await else {
-        return Err(ServerFnError::ServerError("expired token?".into()))
+    }) = garden_state.db.get_user_by_token(token).await
+    else {
+        return Err(ServerFnError::ServerError("expired token?".into()));
     };
 
     Ok(UserView {
@@ -52,44 +54,36 @@ use axum_extra::extract::cookie::Cookie;
     })
 }
 
-fn render_user(user: &Option<UserView>) -> impl IntoView {
-    if let Some(user) = user {
-    let data_view = format!("{:#?}", user);
-    view! { <pre>{ data_view }</pre> }
-    } else {
-        view! { <pre> "NININININ" </pre> }
-    }
-}
-
 #[component]
 pub fn ProfileScreen() -> impl IntoView {
     let (token, set_token) = use_cookie::<String, FromToStringCodec>("token");
 
-    // our resource
-    let async_data = create_resource(
-        move || token.get(),
-        // every time `count` changes, this will run
-        |token| async move {
-            if token.is_some() {
-                logging::log!("loading data from API");
-                if let Ok(user_view) = get_me().await {
-                    return Some(user_view)
-                }
-            }
-            return None
-        },
-    );
-
-    let rendered_profile = move || {
-        async_data.map(|data| {
-            logging::log!("NOW DATA IS: {:?}", data);
-            Ok::<_, ServerFnError>(render_user(data))
-        })
-    };
+    // let async_data = create_resource(
+    //     token,
+    //     |token| async move {
+    //         if token.is_some() {
+    //             logging::log!("loading data from API...");
+    //             if let Ok(user_view) = get_me().await {
+    //                 logging::log!("loaded: {:?}", user_view);
+    //                 return Some(user_view);
+    //             }
+    //         }
+    //         return None;
+    //     },
+    // );
 
     view! {
         <h1>"Profile"</h1>
-        <Suspense fallback=move || view! { <span>"Loading..."</span> }> { rendered_profile } </Suspense>
+            // move || match async_data.get() {
+            //     Some(data) => view! { <pre>format!("{:#?}", data)</pre> }.into_view(),
+            //     None => view! { <span>"Loading..."</span> }.into_view(),
+            // }
+            <Await
+                future=|| get_me()
+                let:data
+            >
+                <pre>{ format!("{:#?}", data) }</pre>
+            </Await>
         <button on:click=move |_| set_token(None)>"Logout"</button>
     }
 }
