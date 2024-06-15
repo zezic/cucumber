@@ -17,8 +17,16 @@ pub struct Model {
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
+    #[sea_orm(has_many = "super::authenticated_client::Entity")]
+    AuthenticatedClient,
     #[sea_orm(has_many = "super::external_user::Entity")]
     ExternalUser,
+}
+
+impl Related<super::authenticated_client::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::AuthenticatedClient.def()
+    }
 }
 
 impl Related<super::external_user::Entity> for Entity {

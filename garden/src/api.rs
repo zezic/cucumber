@@ -8,6 +8,7 @@ use axum::{
     Extension, Json, Router,
 };
 use axum_extra::extract::{cookie::Cookie, CookieJar};
+use entity::sea_orm_active_enums::AuthProvider;
 use oauth_axum::{providers::twitter::TwitterProvider, CustomProvider, OAuthClient};
 use tokio::sync::Mutex;
 use twitter_v2::{authorization::BearerToken, TwitterApi, User};
@@ -69,10 +70,10 @@ pub struct QueryAxumCallback {
 }
 
 pub struct OauthInfo {
-    external_id: String,
-    username: String,
-    display_name: String,
-    data: serde_json::Value,
+    pub external_id: String,
+    pub username: String,
+    pub display_name: String,
+    pub data: serde_json::Value,
 }
 
 pub async fn begin(Path(provider): Path<String>,
@@ -113,7 +114,7 @@ pub async fn callback(
         .generate_token(queries.code, verifier.unwrap())
         .await;
 
-    let result = match provider.as_str() {
+    let (info, provider_enum) = match provider.as_str() {
         "twitter" => {
             let access_token = BearerToken::new(access_token.clone());
             let user = TwitterApi::new(access_token)
@@ -130,7 +131,7 @@ pub async fn callback(
                 display_name: user.name.clone(),
                 data: serde_json::to_value(user).map_err(|err| err.to_string())?,
             };
-            Ok(info)
+            Ok((info, AuthProvider::Twitter))
         }
         x => Err(format!("{x} OAuth2 provider is not supported")),
     }?;
@@ -153,8 +154,8 @@ pub async fn callback(
         let user_id = garden_state
             .db
             .create_user(UserArgs {
-                username: result.username.clone(),
-                display_name: result.display_name.clone(),
+                username: info.username.clone(),
+                display_name: info.display_name.clone(),
             })
             .await
             .map_err(|err| err.to_string())?;
@@ -168,12 +169,12 @@ pub async fn callback(
 
     garden_state
         .db
-        .link_external_user(result, access_token, user_id)
+        .link_external_user(info, provider_enum, access_token, user_id)
         .await
         .map_err(|err| err.to_string())?;
 
     Ok((
-        jar.add(Cookie::new("token", token.hyphenated().to_string())),
+        jar.add(Cookie::build(("token", token.hyphenated().to_string())).path("/")),
         Redirect::to("/"),
     ))
 }

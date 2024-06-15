@@ -1,7 +1,8 @@
 use leptos::{
     component, leptos_dom::logging::console_log, server, server_fn::error::NoCustomError,
-    spawn_local, view, IntoView, ServerFnError,
+    spawn_local, view, IntoView, ServerFnError, SignalWith,
 };
+
 
 #[server(GetOauthUrl, "/api")]
 pub async fn get_oauth_url(provider: String) -> Result<String, ServerFnError> {

@@ -41,8 +41,8 @@ impl MigrationTrait for Migration {
                             .enumeration(AuthProvider::name(), AuthProvider::iden_values())
                             .not_null(),
                     )
-                    .col(ColumnDef::new(ExternalUser::Data).json_binary())
-                    .col(ColumnDef::new(ExternalUser::AccessToken).string())
+                    .col(ColumnDef::new(ExternalUser::Data).json_binary().not_null())
+                    .col(ColumnDef::new(ExternalUser::AccessToken).string().not_null())
                     .col(
                         ColumnDef::new(ExternalUser::CreatedAt)
                             .timestamp()
@@ -74,6 +74,7 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(AuthenticatedClient::UserId).integer().not_null())
                     .col(ColumnDef::new(AuthenticatedClient::Token).uuid().not_null())
                     .col(ColumnDef::new(AuthenticatedClient::CreatedAt).timestamp().not_null().default(Expr::current_timestamp()))
+                    .foreign_key(ForeignKey::create().from(AuthenticatedClient::Table, AuthenticatedClient::UserId).to(User::Table, User::Id))
                     .to_owned(),
             )
             .await?;

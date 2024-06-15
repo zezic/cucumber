@@ -3,7 +3,7 @@ use leptos::*;
 use leptos_meta::*;
 use leptos_router::*;
 
-use crate::components::{login::LoginScreen, ProfileScreen};
+use crate::components::{login::LoginScreen, profile::ProfileScreen, top_bar::TopBar};
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -27,6 +27,7 @@ pub fn App() -> impl IntoView {
             }
             .into_view()
         }>
+            <TopBar/>
             <main>
                 <Routes>
                     <Route path="" view=HomePage/>

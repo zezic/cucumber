@@ -11,9 +11,9 @@ pub struct Model {
     pub user_id: i32,
     pub external_id: String,
     pub auth_provider: AuthProvider,
-    #[sea_orm(column_type = "JsonBinary", nullable)]
-    pub data: Option<Json>,
-    pub access_token: Option<String>,
+    #[sea_orm(column_type = "JsonBinary")]
+    pub data: Json,
+    pub access_token: String,
     pub created_at: DateTime,
 }
 
