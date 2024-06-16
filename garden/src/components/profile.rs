@@ -1,8 +1,9 @@
 use std::str::FromStr;
 
-use leptos::{Await, Suspense};
+use leptos::Await;
+use leptos::SignalGet;
 use leptos::{
-    component, create_resource, logging, server, view, IntoView, ServerFnError, SignalGet,
+    component, server, view, IntoView, ServerFnError,
 };
 use leptos_use::{use_cookie, utils::FromToStringCodec};
 use serde::{Deserialize, Serialize};
@@ -58,32 +59,22 @@ pub async fn get_me() -> Result<UserView, ServerFnError> {
 pub fn ProfileScreen() -> impl IntoView {
     let (token, set_token) = use_cookie::<String, FromToStringCodec>("token");
 
-    // let async_data = create_resource(
-    //     token,
-    //     |token| async move {
-    //         if token.is_some() {
-    //             logging::log!("loading data from API...");
-    //             if let Ok(user_view) = get_me().await {
-    //                 logging::log!("loaded: {:?}", user_view);
-    //                 return Some(user_view);
-    //             }
-    //         }
-    //         return None;
-    //     },
-    // );
-
     view! {
         <h1>"Profile"</h1>
-            // move || match async_data.get() {
-            //     Some(data) => view! { <pre>format!("{:#?}", data)</pre> }.into_view(),
-            //     None => view! { <span>"Loading..."</span> }.into_view(),
-            // }
-            <Await
-                future=|| get_me()
-                let:data
-            >
-                <pre>{ format!("{:#?}", data) }</pre>
-            </Await>
+            {
+                if token.get().is_some() {
+                    view! {
+                        <Await
+                            future=|| get_me()
+                            let:data
+                        >
+                            <pre>{ format!("{:#?}", data) }</pre>
+                        </Await>
+                    }.into_view()
+                } else {
+                    view! {}.into_view()
+                }
+            }
         <button on:click=move |_| set_token(None)>"Logout"</button>
     }
 }

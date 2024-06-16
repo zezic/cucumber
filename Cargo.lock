@@ -1535,9 +1535,11 @@ dependencies = [
  "axum",
  "axum-extra",
  "console_error_panic_hook",
+ "cucumber",
  "dotenv",
  "entity",
  "http 1.1.0",
+ "js-sys",
  "leptos",
  "leptos-use",
  "leptos_axum",
@@ -1556,6 +1558,8 @@ dependencies = [
  "twitter-v2",
  "uuid",
  "wasm-bindgen",
+ "web-sys",
+ "zip",
 ]
 
 [[package]]

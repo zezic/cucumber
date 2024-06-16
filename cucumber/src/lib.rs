@@ -348,7 +348,7 @@ fn replace_named_color<'a>(
     Some(())
 }
 
-fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
+pub fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
     zip: &mut ZipArchive<R>,
 ) -> anyhow::Result<GeneralGoodies> {
     const PARSER_OPTIONS: ParserOptions = ParserOptions {
@@ -471,41 +471,41 @@ fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
 }
 
 #[derive(Debug)]
-struct TimelineColorReference {
-    class_filename: String,
-    const_name: String,
-    field_type_cp_idx: u16,
-    fmim_idx: u16,
+pub struct TimelineColorReference {
+    pub class_filename: String,
+    pub const_name: String,
+    pub field_type_cp_idx: u16,
+    pub fmim_idx: u16,
 }
 
 #[derive(Debug)]
-struct GeneralGoodies {
+pub struct GeneralGoodies {
     #[allow(dead_code)]
-    init_class: String,
-    named_colors: Vec<NamedColor>,
-    palette_color_methods: PaletteColorMethods,
-    raw_colors: RawColorGoodies,
-    timeline_color_ref: TimelineColorReference,
+    pub init_class: String,
+    pub named_colors: Vec<NamedColor>,
+    pub palette_color_methods: PaletteColorMethods,
+    pub raw_colors: RawColorGoodies,
+    pub timeline_color_ref: TimelineColorReference,
 }
 
 #[derive(Debug, Clone)]
-struct NamedColor {
-    class_name: String,
-    method_idx: usize,
-    color_name: String,
-    components: ColorComponents,
+pub struct NamedColor {
+    pub class_name: String,
+    pub method_idx: usize,
+    pub color_name: String,
+    pub components: ColorComponents,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct MethodDescription {
-    class: String,
-    method: String,
-    signature: String,
-    signature_kind: Option<MethodSignatureKind>,
+pub struct MethodDescription {
+    pub class: String,
+    pub method: String,
+    pub signature: String,
+    pub signature_kind: Option<MethodSignatureKind>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum MethodSignatureKind {
+pub enum MethodSignatureKind {
     Si,
     Siii,
     Siiii,
@@ -662,7 +662,7 @@ impl MethodSignatureKind {
 }
 
 #[derive(Clone, Debug)]
-enum ColorComponents {
+pub enum ColorComponents {
     Grayscale(u8),
     Rgbi(u8, u8, u8),
     Rgbai(u8, u8, u8, u8),
@@ -675,7 +675,7 @@ enum ColorComponents {
 }
 
 impl ColorComponents {
-    fn alpha(&self) -> Option<u8> {
+    pub fn alpha(&self) -> Option<u8> {
         Some(match self {
             ColorComponents::Grayscale(_) => 255,
             ColorComponents::Rgbi(_, _, _) => 255,
@@ -705,7 +705,7 @@ impl ColorComponents {
         }
     }
 
-    fn to_rgb(&self, known_colors: &HashMap<String, ColorComponents>) -> (u8, u8, u8) {
+    pub fn to_rgb(&self, known_colors: &HashMap<String, ColorComponents>) -> (u8, u8, u8) {
         match self {
             ColorComponents::Grayscale(v) => (*v, *v, *v),
             ColorComponents::Rgbi(r, g, b) => (*r, *g, *b),
@@ -1076,21 +1076,21 @@ fn is_useful_file(class: &Class) -> Option<UsefulFileType> {
 
 // Color methods and defined static colors (contain important black color)
 #[derive(Debug)]
-struct RawColorGoodies {
+pub struct RawColorGoodies {
     #[allow(dead_code)]
-    methods: RawColorMethods,
-    constants: RawColorConstants,
+    pub methods: RawColorMethods,
+    pub constants: RawColorConstants,
 }
 
 // Color methods and defined static colors (contain important black color)
 #[derive(Debug)]
-struct RawColorMethods {
+pub struct RawColorMethods {
     // rgb_i: MethodDescription,
     // grayscale_i: MethodDescription,
     // rgb_f: MethodDescription,
-    rgba_f: MethodDescription,
+    pub rgba_f: MethodDescription,
     // rgb_d: MethodDescription,
-    rgba_d: MethodDescription,
+    pub rgba_d: MethodDescription,
 }
 
 impl RawColorMethods {
@@ -1100,25 +1100,25 @@ impl RawColorMethods {
 }
 
 #[derive(Debug)]
-struct RawColorConstants {
-    consts: Vec<RawColorConst>,
+pub struct RawColorConstants {
+    pub consts: Vec<RawColorConst>,
 }
 
 #[derive(Debug)]
-struct RawColorConst {
-    class_name: String,
-    const_name: String,
-    color_comps: ColorComponents,
+pub struct RawColorConst {
+    pub class_name: String,
+    pub const_name: String,
+    pub color_comps: ColorComponents,
 }
 
 #[derive(Debug)]
-struct PaletteColorMethods {
-    grayscale_i: MethodDescription,
-    rgb_i: MethodDescription,
-    rgba_i: MethodDescription,
-    rgb_f: MethodDescription,
-    ref_hsv_f: MethodDescription,
-    name_hsv_f: MethodDescription,
+pub struct PaletteColorMethods {
+    pub grayscale_i: MethodDescription,
+    pub rgb_i: MethodDescription,
+    pub rgba_i: MethodDescription,
+    pub rgb_f: MethodDescription,
+    pub ref_hsv_f: MethodDescription,
+    pub name_hsv_f: MethodDescription,
 }
 
 impl PaletteColorMethods {

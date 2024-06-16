@@ -32,6 +32,10 @@ uuid = { version = "1.8.0", features = ["v4"], optional = true }
 axum-extra = { version = "0.9.3", features = ["cookie"] }
 serde_json = "1.0.117"
 leptos-use = "0.10.10"
+web-sys = { version = "0.3.69", features = ["FileReader"] }
+js-sys = "0.3.69"
+cucumber = { workspace = true }
+zip = { git = "https://github.com/Storyyeller/zip.git", default-features = false, features=["deflate"] }
 
 [features]
 hydrate = ["leptos/hydrate", "leptos_meta/hydrate", "leptos_router/hydrate"]

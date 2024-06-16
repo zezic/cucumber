@@ -12,6 +12,7 @@ pub fn TopBar() -> impl IntoView {
             view! {
                 <div class="account-area">
                     <a href="/my">"My Themes"</a>
+                    " | "
                     <a href="/profile">"Profile"</a>
                 </div>
             }
@@ -30,6 +31,8 @@ pub fn TopBar() -> impl IntoView {
     view! {
         <div class="top-bar">
             <a href="/">"Cucumber"</a>
+            " | "
+            <a href="/create">"Create"</a>
             { account_area }
         </div>
     }
