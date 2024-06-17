@@ -21,6 +21,8 @@ use krakatau2::{
     zip::{self, ZipArchive},
 };
 
+pub mod types;
+
 // Will search constant pool for that (inside Utf8 entry)
 // Contain most of the colors and methods to set them
 const PALETTE_ANCHOR: &str = "Device Tint Future";
@@ -1029,10 +1031,14 @@ fn debug_print_color(
 ) {
     let (r, g, b) = components.to_rgb(&known_colors);
     use colored::Colorize;
+    let a = components.alpha().unwrap_or(255);
+
+    let comp_line = format!("{} {} {} {}", r, g, b, a);
+
     let debug_line = if (r as u16 + g as u16 + b as u16) > 384 {
-        format!("{}", color_name).black().on_truecolor(r, g, b)
+        format!("{} {}", comp_line, color_name).black().on_truecolor(r, g, b)
     } else {
-        format!("{}", color_name).on_truecolor(r, g, b)
+        format!("{} {}", comp_line, color_name).on_truecolor(r, g, b)
     };
     println!("{} ({})", debug_line, class_name);
 }

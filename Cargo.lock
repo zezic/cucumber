@@ -1060,6 +1060,8 @@ dependencies = [
  "krakatau2",
  "md5",
  "rand",
+ "serde",
+ "serde_json",
  "xml-rs",
 ]
 

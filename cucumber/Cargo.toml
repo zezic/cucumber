@@ -11,4 +11,6 @@ indicatif = "0.17.6"
 krakatau2 = { git = "ssh://github.com/zezic/Krakatau.git", rev = "c5093b5f94ce0e58931f80b283305b87b0eef824" }
 md5 = "0.7.0"
 rand = "0.8.5"
+serde = { version = "1.0.203", features = ["derive"] }
+serde_json = "1.0.117"
 xml-rs = "0.8.16"

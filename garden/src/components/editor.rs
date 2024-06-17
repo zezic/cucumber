@@ -7,36 +7,9 @@ use leptos::For;
 use leptos_use::{use_drop_zone_with_options, UseDropZoneEvent, UseDropZoneOptions, UseDropZoneReturn};
 use cucumber::{extract_general_goodies, GeneralGoodies};
 
-struct VecReader {
-    cursor: Cursor<Vec<u8>>,
-}
-
-impl VecReader {
-    // Create a new VecReader from a Vec<u8>
-    pub fn new(data: Vec<u8>) -> Self {
-        VecReader {
-            cursor: Cursor::new(data),
-        }
-    }
-}
-
-// Implement the Read trait for VecReader
-impl Read for VecReader {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.cursor.read(buf)
-    }
-}
-
-// Implement the Seek trait for VecReader
-impl Seek for VecReader {
-    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        self.cursor.seek(pos)
-    }
-}
-
 fn handle_jar_blob(data: Vec<u8>) -> GeneralGoodies {
     logging::log!("STG 1");
-    let reader = VecReader::new(data);
+    let reader = Cursor::new(data);
     logging::log!("STG 2");
     let mut zip = zip::ZipArchive::new(reader).unwrap();
     logging::log!("STG 3");
@@ -53,7 +26,6 @@ pub fn Editor() -> impl IntoView {
         logging::log!("DROP: {:?}", event);
         let file = event.files.pop().unwrap();
 
-        // #[cfg(not(feature = "ssr"))]
         {
             use web_sys::FileReader;
             use wasm_bindgen::closure::Closure;
