@@ -1,11 +1,14 @@
 use std::collections::HashMap;
-use std::io::{self, Cursor, Read, Seek, SeekFrom};
+use std::io::Cursor;
 
-use leptos::SignalGet;
-use leptos::{component, create_node_ref, create_signal, html::Div, logging, view, IntoView};
+use cucumber::types::CucumberBitwigTheme;
+use leptos::{create_resource, ServerFnError, SignalGet};
+use leptos::{component, create_node_ref, create_signal, html::Div, logging, view, IntoView, server};
 use leptos::For;
 use leptos_use::{use_drop_zone_with_options, UseDropZoneEvent, UseDropZoneOptions, UseDropZoneReturn};
 use cucumber::{extract_general_goodies, GeneralGoodies};
+
+use leptos::Suspense;
 
 fn handle_jar_blob(data: Vec<u8>) -> GeneralGoodies {
     logging::log!("STG 1");
@@ -16,11 +19,30 @@ fn handle_jar_blob(data: Vec<u8>) -> GeneralGoodies {
     extract_general_goodies(&mut zip).unwrap()
 }
 
+#[server(GetTheme, "/api")]
+pub async fn get_theme(theme_name: String) -> Result<CucumberBitwigTheme, ServerFnError> {
+    // TODO: Make this secure (disallow fs path injection)
+    let text = tokio::fs::read_to_string(format!("storage/{}.json", theme_name)).await?;
+    let theme: CucumberBitwigTheme = serde_json::from_str(&text).unwrap();
+    Ok(theme)
+}
+
 #[component]
 pub fn Editor() -> impl IntoView {
     let drop_zone_el = create_node_ref::<Div>();
     let (colors, set_colors) = create_signal(vec![]);
     let (known_colors, set_known_colors) = create_signal(HashMap::new());
+
+    let (theme, set_theme) = create_signal(None::<CucumberBitwigTheme>);
+
+    // our resource
+    let async_data = create_resource(
+        || {},
+        // every time `count` changes, this will run
+        move |_| async move {
+            get_theme("factory-theme".into()).await
+        },
+    );
 
     let on_drop = move |mut event: UseDropZoneEvent| {
         logging::log!("DROP: {:?}", event);
@@ -61,8 +83,26 @@ pub fn Editor() -> impl IntoView {
         UseDropZoneOptions::default().on_drop(on_drop)
     );
 
+        // {move || match async_data.get() {
+        //     None => view! { <p>"Loading Theme..."</p> }.into_view(),
+        //     Some(data) => view! { <pre> format!("{:#?}", data) </pre> }.into_view()
+        // }}
+
     view! {
         <h1>"Editor"</h1>
+
+
+        <Suspense
+            fallback=move || view! { <span>"Not ready"</span> }
+        >
+            <h2>"Loaded data:"</h2>
+            {move || {
+                async_data.and_then(|theme| view! { <pre> { format!("{:#?}", theme) } </pre> })
+            }}
+            // { move || async_data.and_then(|data| {
+            //     view! { <pre> format!("{:#?}", data) </pre> }.into_view()
+            // }) }
+        </Suspense>
 
         <div
             class:dropover=is_over_drop_zone

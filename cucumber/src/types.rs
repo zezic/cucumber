@@ -2,13 +2,13 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum NamedColor {
     Absolute(AbsoluteColor),
     Relative(Relative),
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AbsoluteColor {
     pub r: u8,
     pub g: u8,
@@ -16,28 +16,27 @@ pub struct AbsoluteColor {
     pub a: u8,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Relative {
     base: RelativeColorBase,
     delta_hue: f32, // -360..360
     delta_saturation: f32, // -100..100
     delta_value: f32, // -100..100
-    delta_alpha: f32,
+    delta_alpha: f32, // -1..1
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum RelativeColorBase {
     Internal(String), // Use color defined in main Bitwig palette
     External(String), // Use color defined in external resource
-
 }
 
-#[derive(Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Hash)]
 pub enum UiTarget {
     Playhead,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum ColorConst {
     Black,
     White,
@@ -74,7 +73,7 @@ impl ColorConst {
     }
 }
 
-#[derive(Default, Debug, Deserialize, Serialize)]
+#[derive(Default, Clone, Debug, Deserialize, Serialize)]
 pub struct CucumberBitwigTheme {
     pub name: String,
     pub named_colors: HashMap<String, NamedColor>,
