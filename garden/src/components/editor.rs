@@ -1,25 +1,21 @@
-use std::collections::HashMap;
 use std::io::Cursor;
 
 use cucumber::types::{AbsoluteColor, CucumberBitwigTheme};
-use leptos::{create_resource, ServerFnError, SignalGet};
-use leptos::{component, create_node_ref, create_signal, html::Div, logging, view, IntoView, server};
-use leptos::For;
+use leptos::{create_resource, ServerFnError};
+use leptos::{component, create_node_ref, html::Div, logging, view, IntoView, server};
 use leptos_use::{use_drop_zone_with_options, UseDropZoneEvent, UseDropZoneOptions, UseDropZoneReturn};
-use cucumber::{extract_general_goodies, GeneralGoodies};
 
 use leptos::Suspense;
-use leptos::SignalWith;
 use leptos::SignalUpdate;
 use cucumber::types::NamedColor;
 
-fn handle_jar_blob(data: Vec<u8>) -> GeneralGoodies {
+fn handle_jar_blob(data: Vec<u8>) -> CucumberBitwigTheme {
     logging::log!("STG 1");
     let reader = Cursor::new(data);
     logging::log!("STG 2");
     let mut zip = zip::ZipArchive::new(reader).unwrap();
     logging::log!("STG 3");
-    extract_general_goodies(&mut zip).unwrap()
+    CucumberBitwigTheme::from_jar(&mut zip)
 }
 
 #[server(GetTheme, "/api")]
@@ -33,8 +29,6 @@ pub async fn get_theme(theme_name: String) -> Result<CucumberBitwigTheme, Server
 #[component]
 pub fn Editor() -> impl IntoView {
     let drop_zone_el = create_node_ref::<Div>();
-    let (colors, set_colors) = create_signal(vec![]);
-    let (known_colors, set_known_colors) = create_signal(HashMap::new());
 
     // our resource
     let async_data = create_resource(
@@ -64,9 +58,10 @@ pub fn Editor() -> impl IntoView {
                     let bytes = array.to_vec();
                     // Process the bytes as needed
                     logging::log!("Read {} bytes", bytes.len());
-                    let goodies = handle_jar_blob(bytes);
-                    set_known_colors(goodies.named_colors.iter().map(|c| (c.color_name.clone(), c.components.clone())).collect());
-                    set_colors(goodies.named_colors);
+                    let theme = handle_jar_blob(bytes);
+                    async_data.update(|old_theme| {
+                        *old_theme = Some(Ok(theme));
+                    });
                 }
             }) as Box<dyn FnMut(_)>);
 
