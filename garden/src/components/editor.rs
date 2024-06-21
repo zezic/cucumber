@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::io::Cursor;
 
-use cucumber::types::CucumberBitwigTheme;
+use cucumber::types::{AbsoluteColor, CucumberBitwigTheme};
 use leptos::{create_resource, ServerFnError, SignalGet};
 use leptos::{component, create_node_ref, create_signal, html::Div, logging, view, IntoView, server};
 use leptos::For;
@@ -9,6 +9,9 @@ use leptos_use::{use_drop_zone_with_options, UseDropZoneEvent, UseDropZoneOption
 use cucumber::{extract_general_goodies, GeneralGoodies};
 
 use leptos::Suspense;
+use leptos::SignalWith;
+use leptos::SignalUpdate;
+use cucumber::types::NamedColor;
 
 fn handle_jar_blob(data: Vec<u8>) -> GeneralGoodies {
     logging::log!("STG 1");
@@ -32,8 +35,6 @@ pub fn Editor() -> impl IntoView {
     let drop_zone_el = create_node_ref::<Div>();
     let (colors, set_colors) = create_signal(vec![]);
     let (known_colors, set_known_colors) = create_signal(HashMap::new());
-
-    let (theme, set_theme) = create_signal(None::<CucumberBitwigTheme>);
 
     // our resource
     let async_data = create_resource(
@@ -83,25 +84,26 @@ pub fn Editor() -> impl IntoView {
         UseDropZoneOptions::default().on_drop(on_drop)
     );
 
-        // {move || match async_data.get() {
-        //     None => view! { <p>"Loading Theme..."</p> }.into_view(),
-        //     Some(data) => view! { <pre> format!("{:#?}", data) </pre> }.into_view()
-        // }}
+    let on_click = move |event| {
+        async_data.update(|theme| {
+            if let Some(Ok(theme)) = theme {
+                theme.name = "Tirsetiarsentoiarsent".into();
+            }
+        });
+    };
 
     view! {
         <h1>"Editor"</h1>
 
+        <button on:click=on_click>"MUTATE"</button>
 
         <Suspense
             fallback=move || view! { <span>"Not ready"</span> }
         >
             <h2>"Loaded data:"</h2>
             {move || {
-                async_data.and_then(|theme| view! { <pre> { format!("{:#?}", theme) } </pre> })
+                async_data.and_then(|theme| view! { <pre> { format!("{:#?}", theme.name) } </pre> })
             }}
-            // { move || async_data.and_then(|data| {
-            //     view! { <pre> format!("{:#?}", data) </pre> }.into_view()
-            // }) }
         </Suspense>
 
         <div
@@ -111,30 +113,45 @@ pub fn Editor() -> impl IntoView {
             "Drop JAR here"
         </div>
         <h2>"Colors"</h2>
-        <div class="colors">
-            <For
-                each=colors
-                key=|c| c.color_name.clone()
-                let:color
-            >   {
-                    let (r, g, b) = color.components.to_rgb(&known_colors.get());
-                    let a = color.components.alpha().unwrap_or(255) as f32 / 255.0;
-                    let bg = format!("rgba({r}, {g}, {b}, {a})");
-                    let fg = if (r as u16 + g as u16 + b as u16 + ((255.0 - a * 255.0) * 2.0) as u16) > 128 * 3 {
-                        "black"
-                    } else {
-                        "white"
-                    };
+        <Suspense
+            fallback=move || view! { <span>"Not ready"</span> }
+        >
+            <div class="colors">
+                { move || {
+                    async_data.and_then(|theme| {
+                        theme.named_colors.iter().map(|(name, color)| {
+                            match color {
+                                NamedColor::Absolute(AbsoluteColor { r, g, b, a }) => {
+                                    let r = *r;
+                                    let g = *g;
+                                    let b = *b;
+                                    let a = *a;
+                                    let a = a as f32 / 255.0;
+                                    let bg = format!("rgba({r}, {g}, {b}, {a})");
+                                    let fg = if (r as u16 + g as u16 + b as u16 + ((255.0 - a * 255.0) * 2.0) as u16) > 128 * 3 {
+                                        "black"
+                                    } else {
+                                        "white"
+                                    };
 
-                    view! { <div
-                        class="color"
-                        style:background-color=bg
-                        style:color=fg
-                    >
-                        { color.color_name }
-                    </div> }
-                }
-            </For>
-        </div>
+                                    view! { <div
+                                        class="color"
+                                        style:background-color=bg
+                                        style:color=fg
+                                    >
+                                        { name }
+                                    </div> }
+                                },
+                                NamedColor::Relative(_) => view! {
+                                    <div class="color">
+                                        { name }" (RELATIVE - IGNORED)"
+                                    </div>
+                                }
+                            }
+                        }).collect::<Vec<_>>()
+                    })
+                } }
+            </div>
+        </Suspense>
     }
 }

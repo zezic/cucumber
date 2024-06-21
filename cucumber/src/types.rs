@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -31,7 +31,7 @@ pub enum RelativeColorBase {
     External(String), // Use color defined in external resource
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum UiTarget {
     Playhead,
 }
@@ -76,6 +76,6 @@ impl ColorConst {
 #[derive(Default, Clone, Debug, Deserialize, Serialize)]
 pub struct CucumberBitwigTheme {
     pub name: String,
-    pub named_colors: HashMap<String, NamedColor>,
-    pub constant_refs: HashMap<UiTarget, ColorConst>,
+    pub named_colors: BTreeMap<String, NamedColor>,
+    pub constant_refs: BTreeMap<UiTarget, ColorConst>,
 }
