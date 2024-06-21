@@ -1,13 +1,14 @@
 use std::io::Cursor;
 
 use cucumber::types::{AbsoluteColor, CucumberBitwigTheme};
-use leptos::{create_resource, ServerFnError};
+use leptos::{create_resource, create_signal, ServerFnError};
 use leptos::{component, create_node_ref, html::Div, logging, view, IntoView, server};
 use leptos_use::{use_drop_zone_with_options, UseDropZoneEvent, UseDropZoneOptions, UseDropZoneReturn};
 
 use leptos::Suspense;
 use leptos::SignalUpdate;
 use cucumber::types::NamedColor;
+use crate::components::color_editor::ColorEditor;
 
 fn handle_jar_blob(data: Vec<u8>) -> CucumberBitwigTheme {
     logging::log!("STG 1");
@@ -26,6 +27,15 @@ pub async fn get_theme(theme_name: String) -> Result<CucumberBitwigTheme, Server
     Ok(theme)
 }
 
+#[derive(Debug, Clone)]
+pub struct CurrentColor {
+    pub name: String,
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+    pub a: u8,
+}
+
 #[component]
 pub fn Editor() -> impl IntoView {
     let drop_zone_el = create_node_ref::<Div>();
@@ -38,6 +48,8 @@ pub fn Editor() -> impl IntoView {
             get_theme("factory-theme".into()).await
         },
     );
+
+    let (current_color, set_current_color) = create_signal(None::<CurrentColor>);
 
     let on_drop = move |mut event: UseDropZoneEvent| {
         logging::log!("DROP: {:?}", event);
@@ -90,6 +102,8 @@ pub fn Editor() -> impl IntoView {
     view! {
         <h1>"Editor"</h1>
 
+        <ColorEditor maybe_color=current_color set_current_color=set_current_color/>
+
         <button on:click=on_click>"MUTATE"</button>
 
         <Suspense
@@ -121,6 +135,7 @@ pub fn Editor() -> impl IntoView {
                                     let g = *g;
                                     let b = *b;
                                     let a = *a;
+                                    let a_u8 = a;
                                     let a = a as f32 / 255.0;
                                     let bg = format!("rgba({r}, {g}, {b}, {a})");
                                     let fg = if (r as u16 + g as u16 + b as u16 + ((255.0 - a * 255.0) * 2.0) as u16) > 128 * 3 {
@@ -133,6 +148,12 @@ pub fn Editor() -> impl IntoView {
                                         class="color"
                                         style:background-color=bg
                                         style:color=fg
+                                        on:click=move |_| {
+                                            logging::log!("CLIIIIICK");
+                                            set_current_color(
+                                                Some(CurrentColor { name: "Abstract Button Pressed Background".into(), r, g, b, a: a_u8 })
+                                            );
+                                        }
                                     >
                                         { name }
                                     </div> }

@@ -32,7 +32,8 @@ pub async fn get_oauth_url(provider: String) -> Result<String, ServerFnError> {
 }
 
 #[component]
-pub fn LoginScreen() -> impl IntoView {
+pub fn LoginScreen(
+) -> impl IntoView {
     // let go_to_auth = move |_| {
     //     spawn_local(async {
     //         let url = get_oauth_url("twitter".to_string()).await;
