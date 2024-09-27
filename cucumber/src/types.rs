@@ -107,16 +107,18 @@ impl CucumberBitwigTheme {
             theme.named_colors.insert(color.color_name.clone(), named_color);
         }
 
-        let timeline_const_name = general_goodies.timeline_color_ref.const_name;
-        let timeline_const = general_goodies.raw_colors.constants.consts.iter().find(|cnst| {
-            cnst.const_name == timeline_const_name
-        }).unwrap();
-        let (r, g, b) = timeline_const.color_comps.to_rgb(&known_colors);
-        let a = timeline_const.color_comps.alpha().unwrap_or(255);
+        if let Some(timeline_color_ref) = general_goodies.timeline_color_ref {
+            let timeline_const_name = timeline_color_ref.const_name;
+            let timeline_const = general_goodies.raw_colors.constants.consts.iter().find(|cnst| {
+                cnst.const_name == timeline_const_name
+            }).unwrap();
+            let (r, g, b) = timeline_const.color_comps.to_rgb(&known_colors);
+            let a = timeline_const.color_comps.alpha().unwrap_or(255);
 
-        let timeline_color_const = ColorConst::from_comps(r, g, b, a);
+            let timeline_color_const = ColorConst::from_comps(r, g, b, a);
 
-        theme.constant_refs.insert(UiTarget::Playhead, timeline_color_const);
+            theme.constant_refs.insert(UiTarget::Playhead, timeline_color_const);
+        }
 
         theme
     }

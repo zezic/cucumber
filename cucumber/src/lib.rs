@@ -114,8 +114,8 @@ fn main() -> anyhow::Result<()> {
         patched_classes.insert(file_name_w_ext, new_buffer);
     }
 
-    {
-        let file_name_w_ext = general_goodies.timeline_color_ref.class_filename.clone();
+    if let Some(timeline_color_ref) = &mut general_goodies.timeline_color_ref {
+        let file_name_w_ext = timeline_color_ref.class_filename.clone();
         let mut file = zip.by_name(&file_name_w_ext)?;
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer)?;
@@ -134,7 +134,7 @@ fn main() -> anyhow::Result<()> {
             .constants
             .consts
             .choose(&mut rng).unwrap();
-        switch_timeline_color(&mut class, &other_color.const_name, &mut general_goodies.timeline_color_ref);
+        switch_timeline_color(&mut class, &other_color.const_name, timeline_color_ref);
         let new_buffer = reasm(&file_name_w_ext, &class)?;
         patched_classes.insert(file_name_w_ext, new_buffer);
     }
@@ -468,7 +468,7 @@ pub fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
         named_colors: all_named_colors,
         palette_color_methods: palette_color_meths.unwrap(),
         raw_colors: raw_color_goodies.unwrap(),
-        timeline_color_ref: timeline_color_ref.unwrap(),
+        timeline_color_ref,
     })
 }
 
@@ -487,7 +487,7 @@ pub struct GeneralGoodies {
     pub named_colors: Vec<NamedColor>,
     pub palette_color_methods: PaletteColorMethods,
     pub raw_colors: RawColorGoodies,
-    pub timeline_color_ref: TimelineColorReference,
+    pub timeline_color_ref: Option<TimelineColorReference>, // Don't exist on 5.2.4?
 }
 
 #[derive(Debug, Clone)]
