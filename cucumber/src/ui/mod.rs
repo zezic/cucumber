@@ -348,7 +348,8 @@ impl App for MyApp {
                         }
 
                         // Update the dialog and check if the user selected a file
-                        if let Some(path) = self.file_dialog.update(ctx).selected() {
+                        self.file_dialog.update(ctx);
+                        if let Some(path) = self.file_dialog.take_selected() {
                             let file = File::open(path).unwrap();
                             let reader = BufReader::new(file);
                             let berikai_theme: BerikaiTheme = serde_json::from_reader(reader).unwrap();
@@ -363,6 +364,7 @@ impl App for MyApp {
                                         a: hsva.a,
                                         compositing_mode: None,
                                     }));
+                                    self.changed_colors.insert(name.clone());
                                 }
                             }
                         }
