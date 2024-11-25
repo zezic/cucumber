@@ -1,21 +1,37 @@
 use std::{
-    collections::{HashMap, VecDeque}, io::Read, path::Path, sync::{Arc, RwLock}
+    collections::{HashMap, VecDeque},
+    io::Read,
+    path::Path,
+    sync::{Arc, RwLock},
 };
 
+use anyhow::anyhow;
 use eframe::{
-    egui::{Context, Frame, ScrollArea},
+    egui::{color_picker::color_picker_hsva_2d, Color32, Context, Frame, Rect, Response, ScrollArea, Sense, Ui},
+    epaint::Hsva,
     App,
 };
-use krakatau2::{file_output_util::Writer, lib::{classfile, ParserOptions}, zip};
-use anyhow::anyhow;
+use egui_extras::StripBuilder;
+use krakatau2::{
+    file_output_util::Writer,
+    lib::{classfile, ParserOptions},
+    zip,
+};
 
-use crate::{extract_general_goodies, patching::patch_class, reasm, replace_named_color, types::{CucumberBitwigTheme, NamedColor, ThemeLoadingEvent}, ColorComponents};
+use crate::{
+    extract_general_goodies,
+    patching::patch_class,
+    reasm, replace_named_color,
+    types::{CucumberBitwigTheme, NamedColor, ThemeLoadingEvent},
+    ColorComponents,
+};
 
 pub struct MyApp {
     jar_in: String,
     jar_out: Option<String>,
     log: Arc<RwLock<VecDeque<LogRecord>>>,
     theme: Arc<RwLock<Option<CucumberBitwigTheme>>>,
+    selected_color: Option<String>,
     filter: String,
 }
 
@@ -88,15 +104,11 @@ fn write_theme_to_jar(
         .map_err(|err| anyhow!("Parse: {:?}", err))?;
 
         if let Some(NamedColor::Absolute(repl)) = theme.named_colors.get(&clr.color_name) {
+            let [r, g, b, a] = Hsva::new(repl.h, repl.s, repl.v, repl.a).to_srgba_unmultiplied();
             if replace_named_color(
                 &mut class,
                 &clr.color_name,
-                ColorComponents::Rgbai(
-                    repl.r,
-                    repl.g,
-                    repl.b,
-                    repl.a,
-                ),
+                ColorComponents::Rgbai(r, g, b, a),
                 &mut general_goodies.named_colors,
                 &general_goodies.palette_color_methods,
             )
@@ -167,6 +179,7 @@ impl MyApp {
             log,
             theme,
             filter: String::new(),
+            selected_color: None,
         })
     }
 }
@@ -207,29 +220,112 @@ impl App for MyApp {
                                 }
                             }
                             if let NamedColor::Absolute(absolute_color) = color {
-                                let mut rgba_unmul = [
-                                    absolute_color.r,
-                                    absolute_color.g,
-                                    absolute_color.b,
-                                    absolute_color.a,
-                                ];
-                                ui.horizontal(|ui| {
-                                    ui.add_space(6.0);
-                                    if ui
-                                        .color_edit_button_srgba_unmultiplied(&mut rgba_unmul)
-                                        .changed()
-                                    {
-                                        absolute_color.r = rgba_unmul[0];
-                                        absolute_color.g = rgba_unmul[1];
-                                        absolute_color.b = rgba_unmul[2];
-                                        absolute_color.a = rgba_unmul[3];
-                                    }
-                                    ui.label(name);
-                                });
+                                // let fill = Color32::from_rgba_unmultiplied(
+                                //     absolute_color.r,
+                                //     absolute_color.g,
+                                //     absolute_color.b,
+                                //     absolute_color.a,
+                                // );
+
+                                let mut hsva = Hsva::new(absolute_color.h, absolute_color.s, absolute_color.v, absolute_color.a);
+                                ui.set_min_width(330.0);
+                                if egui::Frame::none()
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.add_space(6.0);
+                                            if ui
+                                                .color_edit_button_hsva(
+                                                    &mut hsva,
+                                                )
+                                                .changed()
+                                            {
+                                                absolute_color.h = hsva.h;
+                                                absolute_color.s = hsva.s;
+                                                absolute_color.v = hsva.v;
+                                                absolute_color.a = hsva.a;
+                                            }
+                                            ui.label(name);
+                                        });
+                                    })
+                                    .response
+                                    .interact(Sense::click())
+                                    .clicked()
+                                {
+                                    self.selected_color = Some(name.clone());
+                                }
                                 ui.separator();
                             }
                         }
                     });
+                }
+            });
+
+        egui::TopBottomPanel::top("Toolbar")
+            .frame(frame)
+            .show(ctx, |ui| {
+                if ui.button("Patch JAR").clicked() {
+                    let jar_in = self.jar_in.clone();
+                    let jar_out = self.jar_out.clone().unwrap();
+                    let theme = self.theme.read().unwrap().as_ref().cloned().unwrap();
+                    let log = self.log.clone();
+                    let ctx = ctx.clone();
+                    std::thread::spawn(move || {
+                        write_theme_to_jar(jar_in, jar_out, theme, |evt| {
+                            let mut log = log.write().unwrap();
+                            if log.len() == log.capacity() {
+                                log.pop_front();
+                            }
+                            log.push_back(LogRecord::ThemeWriting(evt));
+                            drop(log);
+                            ctx.request_repaint();
+                        })
+                    });
+                }
+            });
+
+        egui::SidePanel::left("Color Picker")
+            .frame(frame.inner_margin(8.0))
+            .min_width(330.0)
+            .resizable(false)
+            .show(ctx, |ui| {
+                if let Some(color_name) = &self.selected_color {
+                    ui.label(color_name);
+                    let mut theme = self.theme.write().unwrap();
+                    if let Some(NamedColor::Absolute(absolute_color)) =
+                        theme.as_mut().unwrap().named_colors.get_mut(color_name)
+                    {
+                        let mut hsva = Hsva::new(absolute_color.h, absolute_color.s, absolute_color.v, absolute_color.a);
+
+                        ui.spacing_mut().slider_width = 314.0;
+                        if egui::color_picker::color_picker_hsva_2d(ui, &mut hsva, egui::color_picker::Alpha::OnlyBlend) {
+                            let color = hsva.to_srgba_unmultiplied();
+                            absolute_color.h = hsva.h;
+                            absolute_color.s = hsva.s;
+                            absolute_color.v = hsva.v;
+                            absolute_color.a = hsva.a;
+                        }
+
+                        // egui::color_picker::color_picker_color32(ui, &mut srgba, egui::color_picker::Alpha::OnlyBlend);
+
+                        // let widget_rect =
+                        //     egui::Rect::from_min_size(ui.min_rect().min, ui.available_size());
+
+                        // ui.add_sized(ui.available_size(), |ui: &mut Ui| {
+                        //     let (rect, resp) = ui.allocate_at_least([100.0, 100.0].into(), Sense::click_and_drag());
+                        //     if color_picker_hsva_2d(
+                        //         ui,
+                        //         &mut hsva,
+                        //         egui::color_picker::Alpha::OnlyBlend,
+                        //     ) {
+                        //         let rgba = hsva.to_srgba_unmultiplied();
+                        //         absolute_color.r = rgba[0];
+                        //         absolute_color.g = rgba[1];
+                        //         absolute_color.b = rgba[2];
+                        //         absolute_color.a = rgba[3];
+                        //     }
+                        //     resp
+                        // });
+                    }
                 }
             });
 
@@ -243,27 +339,6 @@ impl App for MyApp {
                     ui.label(format!("{:?}", rec));
                 }
             });
-
-        egui::TopBottomPanel::top("Toolbar").frame(frame).show(ctx, |ui| {
-            if ui.button("Patch JAR").clicked() {
-                let jar_in = self.jar_in.clone();
-                let jar_out = self.jar_out.clone().unwrap();
-                let theme = self.theme.read().unwrap().as_ref().cloned().unwrap();
-                let log = self.log.clone();
-                let ctx = ctx.clone();
-                std::thread::spawn(move || {
-                    write_theme_to_jar(jar_in, jar_out, theme, |evt| {
-                        let mut log = log.write().unwrap();
-                        if log.len() == log.capacity() {
-                            log.pop_front();
-                        }
-                        log.push_back(LogRecord::ThemeWriting(evt));
-                        drop(log);
-                        ctx.request_repaint();
-                    })
-                });
-            }
-        });
 
         egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
             if ui.button("hehehe").clicked() {

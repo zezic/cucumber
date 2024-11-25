@@ -13,10 +13,10 @@ pub enum NamedColor {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AbsoluteColor {
-    pub r: u8,
-    pub g: u8,
-    pub b: u8,
-    pub a: u8,
+    pub h: f32,
+    pub s: f32,
+    pub v: f32,
+    pub a: f32,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -103,11 +103,12 @@ impl CucumberBitwigTheme {
         }).collect();
 
         for color in general_goodies.named_colors {
-            let (r, g, b) = color.components.to_rgb(&known_colors);
+            let (h, s, v) = color.components.to_hsv(&known_colors);
+            println!("{:?} -> {:?}", color, (h, s, v));
             let a = color.components.alpha().unwrap_or(255);
             let named_color = NamedColor::Absolute(
                 AbsoluteColor {
-                    r, g, b, a
+                    h, s, v, a: a as f32 / 255.0
                 }
             );
             theme.named_colors.insert(color.color_name.clone(), named_color);

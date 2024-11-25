@@ -23,11 +23,11 @@ fn main() -> anyhow::Result<()> {
     }).collect();
 
     for color in general_goodies.named_colors {
-        let (r, g, b) = color.components.to_rgb(&known_colors);
+        let (h, s, v) = color.components.to_hsv(&known_colors);
         let a = color.components.alpha().unwrap_or(255);
         let named_color = NamedColor::Absolute(
             AbsoluteColor {
-                r, g, b, a
+                h, s, v, a: a as f32 / 255.0
             }
         );
         theme.named_colors.insert(color.color_name.clone(), named_color);

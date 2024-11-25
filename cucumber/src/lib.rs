@@ -2,7 +2,8 @@ use std::{collections::HashMap, env, fmt::Debug, fs, io::Read, path::Path, time:
 
 use anyhow::anyhow;
 
-use colorsys::{ColorTransform, Rgb, SaturationInSpace};
+use colorsys::{ColorTransform, Hsl, Rgb, SaturationInSpace};
+use eframe::epaint::Hsva;
 // use indicatif::ProgressBar;
 use krakatau2::{
     file_output_util::Writer,
@@ -745,6 +746,16 @@ impl ColorComponents {
                 ((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
             }
         }
+    }
+
+    pub fn to_hsv(&self, known_colors: &HashMap<String, ColorComponents>) -> (f32, f32, f32) {
+        let (r, g, b) = self.to_rgb(known_colors);
+        let hsva = Hsva::from_srgb([
+            r,
+            g,
+            b,
+        ]);
+        (hsva.h, hsva.s, hsva.v)
     }
 }
 
