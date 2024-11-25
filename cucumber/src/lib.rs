@@ -257,6 +257,8 @@ fn replace_named_color<'a>(
         .iter_mut()
         .find(|color| color.color_name == name)?;
 
+    println!("### REPLACING {}: {:?}", name, new_value);
+
     let method_descr_to_find = match compositing_mode {
         Some(CompositingMode::BlendedOnBackground) => {
             &palette_color_meths.rgba_i_blended_on_background
@@ -274,6 +276,9 @@ fn replace_named_color<'a>(
     ) {
         Some(met) => met,
         None => {
+            if matches!(compositing_mode, Some(CompositingMode::RelativeToBackground)) {
+                unimplemented!("Not done yet, but it's easy");
+            }
             let rgbai_method_desc = &palette_color_meths.rgba_i_absolute;
 
             let class_utf_id = class.cp.0.len();
@@ -320,6 +325,7 @@ fn replace_named_color<'a>(
     let method = class.methods.get_mut(named_color.method_idx)?;
 
     let attr = method.attrs.first_mut()?;
+
     let classfile::attrs::AttrBody::Code((code_1, _code_2)) = &mut attr.body else {
         return None;
     };
@@ -339,35 +345,43 @@ fn replace_named_color<'a>(
             continue;
         }
 
-        if let Instr::Ldc(id) = new_bytecode.last()?.1 {
-            let Some(text) = find_utf_ldc(&rp, id as u16) else {
-                continue;
-            };
-            if text == name {
-                loop {
-                    let ix = old_bytecode.next().unwrap();
-                    if let Instr::Invokevirtual(method_id) = ix.1 {
-                        let desc = find_method_description(&rp, method_id, None).unwrap();
-                        if desc.signature == old_desc.signature {
-                            break;
-                        }
-                    }
-                }
-                let (ixs_to_push, floats_to_add) = new_value.to_ixs(class.cp.0.len());
-                for ix in ixs_to_push {
-                    new_bytecode.push((Pos(pos_gen.next()?), ix));
-                }
-                if let Some(floats) = floats_to_add {
-                    for float in floats {
-                        class.cp.0.push(Const::Float(u32::from_be_bytes(float.float.to_be_bytes())));
-                    }
-                }
+        let id = match new_bytecode.last()?.1 {
+            Instr::Ldc(id) => id as u16,
+            Instr::LdcW(id) => id as u16,
+            _ => { continue; }
+        };
 
-                // Now invoke correct method instead of old
-                new_bytecode.push((Pos(pos_gen.next()?), Instr::Invokevirtual(rgbai_method_id)));
-                named_color.components = new_value.clone();
-                ready = true;
+        let Some(text) = find_utf_ldc(&rp, id as u16) else {
+            continue;
+        };
+        if text == name {
+            if name == "Knob Body" {
+                println!("### TEXT == NAME {:?}", name);
             }
+
+            loop {
+                let ix = old_bytecode.next().unwrap();
+                if let Instr::Invokevirtual(method_id) = ix.1 {
+                    let desc = find_method_description(&rp, method_id, None).unwrap();
+                    if desc.signature == old_desc.signature {
+                        break;
+                    }
+                }
+            }
+            let (ixs_to_push, floats_to_add) = new_value.to_ixs(class.cp.0.len());
+            for ix in ixs_to_push {
+                new_bytecode.push((Pos(pos_gen.next()?), ix));
+            }
+            if let Some(floats) = floats_to_add {
+                for float in floats {
+                    class.cp.0.push(Const::Float(u32::from_be_bytes(float.float.to_be_bytes())));
+                }
+            }
+
+            // Now invoke correct method instead of old
+            new_bytecode.push((Pos(pos_gen.next()?), Instr::Invokevirtual(rgbai_method_id)));
+            named_color.components = new_value.clone();
+            ready = true;
         }
     }
     drop(old_bytecode);
@@ -774,27 +788,21 @@ impl ColorComponents {
         }
     }
 
-    pub fn to_rgb(&self, known_colors: &HashMap<String, ColorComponents>) -> (u8, u8, u8) {
-        match self {
+    pub fn to_rgb(&self, known_colors: &HashMap<String, ColorComponents>) -> Option<(u8, u8, u8)> {
+        let components = match self {
             ColorComponents::Grayscale(v) => (*v, *v, *v),
             ColorComponents::Rgbi(r, g, b) => (*r, *g, *b),
             ColorComponents::Rgbai(r, g, b, _a) => (*r, *g, *b),
             ColorComponents::Hsvf(h, s, v) => {
-                // TODO: convert HSV to RGB!
-                let color = colorsys::Hsl::new(*h as f64, *s as f64, *v as f64, None);
-                let color = colorsys::Rgb::from(color);
-                (
-                    (color.red() * 255.0) as u8,
-                    (color.green() * 255.0) as u8,
-                    (color.blue() * 255.0) as u8,
-                )
+                println!("It's dh ds dv, it's not absolute color");
+                return None
             }
             ColorComponents::RefAndAdjust(_, _, _, _) => todo!(),
             ColorComponents::StringAndAdjust(ref_name, h, s, v) => {
                 let Some(known) = known_colors.get(ref_name) else {
                     panic!("Unknown color ref: {}", ref_name);
                 };
-                let (r, g, b) = known.to_rgb(&known_colors);
+                let Some((r, g, b)) = known.to_rgb(&known_colors) else { return None };
                 let mut rgb = Rgb::from((r, g, b));
                 rgb.adjust_hue(*h as f64);
                 rgb.saturate(SaturationInSpace::Hsl(*s as f64 * 100.));
@@ -807,13 +815,18 @@ impl ColorComponents {
             ColorComponents::Rgbad(r, g, b, _a) => {
                 ((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
             }
-        }
+        };
+        Some(components)
     }
 
     pub fn to_hsv(&self, known_colors: &HashMap<String, ColorComponents>) -> (f32, f32, f32) {
-        let (r, g, b) = self.to_rgb(known_colors);
-        let hsva = Hsva::from_srgb([r, g, b]);
-        (hsva.h, hsva.s, hsva.v)
+        if let ColorComponents::Hsvf(dh, ds, dv) = self {
+            (*dh, *ds, *dv)
+        } else {
+            let (r, g, b) = self.to_rgb(known_colors).unwrap();
+            let hsva = Hsva::from_srgb([r, g, b]);
+            (hsva.h, hsva.s, hsva.v)
+        }
     }
 }
 
@@ -1121,7 +1134,10 @@ fn debug_print_color(
     components: &ColorComponents,
     known_colors: &HashMap<String, ColorComponents>,
 ) {
-    let (r, g, b) = components.to_rgb(&known_colors);
+    let Some((r, g, b)) = components.to_rgb(&known_colors) else {
+        println!("HSV Color: {:?}", components);
+        return;
+    };
     use colored::Colorize;
     let a = components.alpha().unwrap_or(255);
 

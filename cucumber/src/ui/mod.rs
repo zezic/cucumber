@@ -109,10 +109,15 @@ fn write_theme_to_jar(
 
         if let Some(NamedColor::Absolute(repl)) = theme.named_colors.get(&clr.color_name) {
             let [r, g, b, a] = Hsva::new(repl.h, repl.s, repl.v, repl.a).to_srgba_unmultiplied();
+
+            let new_value = match repl.compositing_mode {
+                Some(CompositingMode::RelativeToBackground) => ColorComponents::Hsvf(repl.h, repl.s, repl.v),
+                _ => ColorComponents::Rgbai(r, g, b, a),
+            };
             if replace_named_color(
                 &mut class,
                 &clr.color_name,
-                ColorComponents::Rgbai(r, g, b, a),
+                new_value,
                 &mut general_goodies.named_colors,
                 &general_goodies.palette_color_methods,
                 repl.compositing_mode.clone(),
@@ -387,27 +392,44 @@ impl App for MyApp {
                                 "Compositing: Unspecified",
                             );
                         }
-                        let mut hsva = Hsva::new(
-                            absolute_color.h,
-                            absolute_color.s,
-                            absolute_color.v,
-                            absolute_color.a,
-                        );
 
-                        ui.spacing_mut().slider_width = 266.0;
-                        Frame::none().inner_margin(24.0).show(ui, |ui| {
-                            if egui::color_picker::color_picker_hsva_2d(
-                                ui,
-                                &mut hsva,
-                                egui::color_picker::Alpha::OnlyBlend,
-                            ) {
-                                absolute_color.h = hsva.h;
-                                absolute_color.s = hsva.s;
-                                absolute_color.v = hsva.v;
-                                absolute_color.a = hsva.a;
-                                self.changed_colors.insert(color_name.clone());
-                            }
-                        });
+                        if let Some(CompositingMode::RelativeToBackground) = absolute_color.compositing_mode {
+                            ui.horizontal(|ui| {
+                                if ui.add(egui::DragValue::new(&mut absolute_color.h).range(-360.0..=360.0).speed(0.1).prefix("ΔH")).changed() {
+                                    self.changed_colors.insert(color_name.clone());
+                                }
+                                if ui.add(egui::DragValue::new(&mut absolute_color.s).range(-1.0..=1.0).speed(0.01).prefix("ΔS")).changed() {
+                                    self.changed_colors.insert(color_name.clone());
+                                }
+                                if ui.add(egui::DragValue::new(&mut absolute_color.v).range(-1.0..=1.0).speed(0.01).prefix("ΔV")).changed() {
+                                    self.changed_colors.insert(color_name.clone());
+                                }
+                                ui.add_space(5.0);
+                            });
+                        } else {
+                            let mut hsva = Hsva::new(
+                                absolute_color.h,
+                                absolute_color.s,
+                                absolute_color.v,
+                                absolute_color.a,
+                            );
+
+                            ui.spacing_mut().slider_width = 266.0;
+                            Frame::none().inner_margin(24.0).show(ui, |ui| {
+                                if egui::color_picker::color_picker_hsva_2d(
+                                    ui,
+                                    &mut hsva,
+                                    egui::color_picker::Alpha::OnlyBlend,
+                                ) {
+                                    println!("### {:?} -> {:?}", absolute_color, hsva);
+                                    absolute_color.h = hsva.h;
+                                    absolute_color.s = hsva.s;
+                                    absolute_color.v = hsva.v;
+                                    absolute_color.a = hsva.a;
+                                    self.changed_colors.insert(color_name.clone());
+                                }
+                            });
+                        }
                     }
                 }
             });
@@ -440,37 +462,81 @@ impl App for MyApp {
                 let uri = self.img_src.uri().unwrap();
                 ctx.forget_image(uri);
 
-                // Step 1: Parse the SVG XML
-                let mut root = Element::parse(self.mockup.as_slice()).unwrap();
-                // Step 2: Traverse and modify elements with the target class
-                fn modify_element(element: &mut Element, target_class: &str, new_fill: &str) {
-                    if let Some(class) = element.attributes.get("class") {
-                        if class == target_class {
-                            element.attributes.insert("fill".to_string(), new_fill.to_string());
-                        }
-                    }
-
-                    // Recursively process child elements
-                    for child in element.children.iter_mut() {
-                        if let xmltree::XMLNode::Element(ref mut child_element) = child {
-                            modify_element(child_element, target_class, new_fill);
-                        }
-                    }
-                }
                 if let Some(theme) = self.theme.read().unwrap().as_ref() {
+                    // Step 1: Parse the SVG XML
+                    let mut root = Element::parse(self.mockup.as_slice()).unwrap();
+                    // Step 2: Traverse and modify elements with the target class
+                    fn modify_element(element: &mut Element, target_class: &str, new_fill: &str) {
+                        if let Some(class) = element.attributes.get("class") {
+                            if class == target_class {
+                                if element.attributes.contains_key("fill") {
+                                    element.attributes.insert("fill".to_string(), new_fill.to_string());
+                                } else {
+                                    element.attributes.insert("stop-color".to_string(), new_fill.to_string());
+                                }
+                            }
+                        }
+
+                        // Recursively process child elements
+                        for child in element.children.iter_mut() {
+                            if let xmltree::XMLNode::Element(ref mut child_element) = child {
+                                modify_element(child_element, target_class, new_fill);
+                            }
+                        }
+                    }
+                    fn modify_element_relative(element: &mut Element, target_class: &str, dh: f32, ds: f32, dv: f32, theme: &CucumberBitwigTheme) {
+                        if let Some(class) = element.attributes.get("class") {
+                            if class == target_class {
+                                if let Some(bg) = element.attributes.get("bg") {
+                                    if let Some((_, NamedColor::Absolute(absolute_color))) = theme.named_colors.iter().find(|(name, b)| &name.to_lowercase().replace(" ", "-") == bg) {
+                                        let [r, g, b] = Hsva::new(absolute_color.h, absolute_color.s, absolute_color.v, 1.0).to_srgb();
+                                        dbg!(r, g, b);
+                                        let rgb = colorsys::Rgb::from((r as f64, g as f64, b as f64));
+                                        dbg!(&rgb);
+                                        let hsl = colorsys::Hsl::from(rgb);
+                                        dbg!(&hsl);
+                                        let h = (hsl.hue() + dh as f64).rem_euclid(360.0);
+                                        let s = (hsl.saturation() / 100.0 + ds as f64).clamp(0.0, 1.0) * 100.0;
+                                        let l = (hsl.lightness() / 100.0 + dv as f64 * 0.5).clamp(0.0, 1.0) * 100.0;
+                                        dbg!(&h, &s, &l);
+                                        let hsl = colorsys::Hsl::new(h, s, l, None);
+                                        dbg!(&hsl);
+                                        let rgb = colorsys::Rgb::from(hsl);
+                                        dbg!(&rgb);
+
+                                        let new_fill = format!("#{:02X}{:02X}{:02X}{:02X}", (rgb.red()) as u8, (rgb.green()) as u8, (rgb.blue()) as u8, 255);
+                                        dbg!(&new_fill);
+                                        println!("-----");
+                                        element.attributes.insert("fill".to_string(), new_fill.to_string());
+                                    }
+                                }
+                            }
+                        }
+
+                        // Recursively process child elements
+                        for child in element.children.iter_mut() {
+                            if let xmltree::XMLNode::Element(ref mut child_element) = child {
+                                modify_element_relative(child_element, target_class, dh, ds, dv, &theme);
+                            }
+                        }
+                    }
                     for changed_color in self.changed_colors.drain() {
                         if let NamedColor::Absolute(repl) = theme.named_colors.get(&changed_color).as_ref().unwrap() {
-                            let [r, g, b, a] = Hsva::new(repl.h, repl.s, repl.v, repl.a).to_srgba_unmultiplied();
-                            let hex = format!("#{:02X}{:02X}{:02X}{:02X}", r, g, b, a);
-                            modify_element(&mut root, &changed_color.to_lowercase().replace(" ", "-"), &hex);
+                            if let Some(CompositingMode::RelativeToBackground) = repl.compositing_mode {
+                                modify_element_relative(&mut root, &changed_color.to_lowercase().replace(" ", "-"), repl.h, repl.s, repl.v, &theme);
+                            } else {
+                                let [r, g, b, a] = Hsva::new(repl.h, repl.s, repl.v, repl.a).to_srgba_unmultiplied();
+                                let hex = format!("#{:02X}{:02X}{:02X}{:02X}", r, g, b, a);
+                                modify_element(&mut root, &changed_color.to_lowercase().replace(" ", "-"), &hex);
+                            }
                         }
                     }
+                    // Step 3: Serialize the modified SVG back to bytes
+                    let mut output = Vec::new();
+                    let config = EmitterConfig::new().perform_indent(true); // Optional pretty printing
+                    root.write_with_config(&mut output, config).unwrap();
+                    self.mockup = output;
                 }
-                // Step 3: Serialize the modified SVG back to bytes
-                let mut output = Vec::new();
-                let config = EmitterConfig::new().perform_indent(true); // Optional pretty printing
-                root.write_with_config(&mut output, config).unwrap();
-                self.mockup = output;
 
                 self.img_src = egui::ImageSource::Bytes {
                     uri: Cow::Borrowed("bytes://../../assets/mockup.svg"),
