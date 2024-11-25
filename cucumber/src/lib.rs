@@ -20,8 +20,10 @@ use krakatau2::{
     },
     zip::{self, ZipArchive},
 };
+use types::ThemeLoadingEvent;
 
 pub mod types;
+pub mod ui;
 
 // Will search constant pool for that (inside Utf8 entry)
 // Contain most of the colors and methods to set them
@@ -64,7 +66,7 @@ fn main() -> anyhow::Result<()> {
     let file = fs::File::open(input_jar)?;
     let mut zip = zip::ZipArchive::new(file)?;
 
-    let mut general_goodies = extract_general_goodies(&mut zip)?;
+    let mut general_goodies = extract_general_goodies(&mut zip, |_| {})?;
 
     println!("STAGE 1: {}", start.elapsed().as_millis());
     let start = Instant::now();
@@ -352,10 +354,13 @@ fn replace_named_color<'a>(
 
 pub fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
     zip: &mut ZipArchive<R>,
+    mut report_progress: impl FnMut(ThemeLoadingEvent),
 ) -> anyhow::Result<GeneralGoodies> {
     const PARSER_OPTIONS: ParserOptions = ParserOptions {
         no_short_code_attr: true,
     };
+
+    report_progress(ThemeLoadingEvent::Aaa);
 
     let file_names = zip.file_names().map(Into::into).collect::<Vec<String>>();
 
@@ -364,6 +369,8 @@ pub fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
     let mut timeline_color_ref = None;
 
     let mut data = Vec::new();
+
+    report_progress(ThemeLoadingEvent::Bbb);
 
     // let progress_bar = ProgressBar::new(file_names.len() as u64);
     let mut init_class_name = None;

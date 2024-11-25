@@ -76,6 +76,12 @@ impl ColorConst {
     }
 }
 
+#[derive(Debug)]
+pub enum ThemeLoadingEvent {
+    Aaa,
+    Bbb,
+}
+
 #[derive(Default, Clone, Debug, Deserialize, Serialize)]
 pub struct CucumberBitwigTheme {
     pub name: String,
@@ -84,8 +90,8 @@ pub struct CucumberBitwigTheme {
 }
 
 impl CucumberBitwigTheme {
-    pub fn from_jar< R: std::io::Read + std::io::Seek >(zip: &mut ZipArchive<R>) -> Self {
-        let general_goodies = extract_general_goodies(zip).unwrap();
+    pub fn from_jar< R: std::io::Read + std::io::Seek >(zip: &mut ZipArchive<R>, report_progress: impl FnMut(ThemeLoadingEvent)) -> Self {
+        let general_goodies = extract_general_goodies(zip, report_progress).unwrap();
 
         let mut theme = CucumberBitwigTheme {
             name: "Extracted Theme".into(),

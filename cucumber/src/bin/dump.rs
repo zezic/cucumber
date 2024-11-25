@@ -11,7 +11,7 @@ fn main() -> anyhow::Result<()> {
     let file = fs::File::open(input_jar)?;
     let mut zip = zip::ZipArchive::new(file)?;
 
-    let general_goodies = extract_general_goodies(&mut zip)?;
+    let general_goodies = extract_general_goodies(&mut zip, |_| {})?;
 
     let mut theme = CucumberBitwigTheme {
         name: "Extracted Theme".into(),
