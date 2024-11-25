@@ -23,6 +23,7 @@ use krakatau2::{
 };
 use types::{CompositingMode, ThemeLoadingEvent};
 
+pub mod exchange;
 pub mod patching;
 pub mod types;
 pub mod ui;

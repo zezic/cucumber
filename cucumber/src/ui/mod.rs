@@ -1,17 +1,17 @@
 use std::{
-    collections::{HashMap, VecDeque},
-    io::Read,
-    path::Path,
-    sync::{Arc, RwLock},
+    collections::{HashMap, VecDeque}, fs::File, io::{BufReader, Read}, path::Path, str::FromStr, sync::{Arc, RwLock}
 };
 
 use anyhow::anyhow;
 use eframe::{
-    egui::{color_picker::color_picker_hsva_2d, Color32, Context, Frame, Rect, Response, ScrollArea, Sense, Ui},
+    egui::{
+        color_picker::color_picker_hsva_2d, ecolor::HexColor, Color32, Context, Frame, Layout, Rect, Response, ScrollArea, Sense, Ui
+    },
     epaint::Hsva,
     App,
 };
 use egui_extras::StripBuilder;
+use egui_file_dialog::FileDialog;
 use krakatau2::{
     file_output_util::Writer,
     lib::{classfile, ParserOptions},
@@ -19,11 +19,7 @@ use krakatau2::{
 };
 
 use crate::{
-    extract_general_goodies,
-    patching::patch_class,
-    reasm, replace_named_color,
-    types::{CucumberBitwigTheme, NamedColor, ThemeLoadingEvent},
-    ColorComponents,
+    exchange::BerikaiTheme, extract_general_goodies, patching::patch_class, reasm, replace_named_color, types::{AbsoluteColor, CompositingMode, CucumberBitwigTheme, NamedColor, ThemeLoadingEvent}, ColorComponents
 };
 
 pub struct MyApp {
@@ -33,6 +29,8 @@ pub struct MyApp {
     theme: Arc<RwLock<Option<CucumberBitwigTheme>>>,
     selected_color: Option<String>,
     filter: String,
+    first_run: bool,
+    file_dialog: FileDialog,
 }
 
 #[derive(Debug)]
@@ -151,6 +149,38 @@ impl MyApp {
         jar_in: Option<String>,
         jar_out: Option<String>,
     ) -> anyhow::Result<Self> {
+        egui_extras::install_image_loaders(&ctx);
+
+        use eframe::egui;
+        // Start with the default fonts (we will be adding to them rather than replacing them).
+        let mut fonts = egui::FontDefinitions::default();
+        // Install my own font (maybe supporting non-latin characters).
+        // .ttf and .otf files supported.
+        fonts.font_data.insert(
+            "InterRegular".to_owned(),
+            egui::FontData::from_static(include_bytes!("../../assets/InterDisplay-Regular.ttf")),
+        );
+        fonts.font_data.insert(
+            "IosevkaRegular".to_owned(),
+            egui::FontData::from_static(include_bytes!(
+                "../../assets/iosevka-term-curly-regular.ttf"
+            )),
+        );
+        // Put my font first (highest priority) for proportional text:
+        fonts
+            .families
+            .entry(egui::FontFamily::Proportional)
+            .or_default()
+            .insert(0, "InterRegular".to_owned());
+        // Put my font as last fallback for monospace:
+        fonts
+            .families
+            .entry(egui::FontFamily::Monospace)
+            .or_default()
+            .insert(0, "IosevkaRegular".to_owned());
+        // Tell egui to use these fonts:
+        ctx.set_fonts(fonts);
+
         let jar_in = jar_in.unwrap();
         let theme = Arc::new(RwLock::new(None));
         let log = Arc::new(RwLock::new(VecDeque::with_capacity(256)));
@@ -181,6 +211,8 @@ impl MyApp {
             theme,
             filter: String::new(),
             selected_color: None,
+            first_run: true,
+            file_dialog: FileDialog::new(),
         })
     }
 }
@@ -188,10 +220,11 @@ impl MyApp {
 impl App for MyApp {
     fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
         use eframe::egui;
-        egui_extras::install_image_loaders(ctx);
-
-        // TODO: remove that
-        ctx.set_pixels_per_point(1.5);
+        if self.first_run {
+            // TODO: remove that
+            ctx.set_pixels_per_point(1.5);
+            self.first_run = false;
+        }
 
         let frame = Frame::central_panel(&ctx.style());
 
@@ -228,18 +261,18 @@ impl App for MyApp {
                                 //     absolute_color.a,
                                 // );
 
-                                let mut hsva = Hsva::new(absolute_color.h, absolute_color.s, absolute_color.v, absolute_color.a);
+                                let mut hsva = Hsva::new(
+                                    absolute_color.h,
+                                    absolute_color.s,
+                                    absolute_color.v,
+                                    absolute_color.a,
+                                );
                                 ui.set_min_width(330.0);
                                 if egui::Frame::none()
                                     .show(ui, |ui| {
                                         ui.horizontal(|ui| {
                                             ui.add_space(6.0);
-                                            if ui
-                                                .color_edit_button_hsva(
-                                                    &mut hsva,
-                                                )
-                                                .changed()
-                                            {
+                                            if ui.color_edit_button_hsva(&mut hsva).changed() {
                                                 absolute_color.h = hsva.h;
                                                 absolute_color.s = hsva.s;
                                                 absolute_color.v = hsva.v;
@@ -264,24 +297,54 @@ impl App for MyApp {
         egui::TopBottomPanel::top("Toolbar")
             .frame(frame)
             .show(ctx, |ui| {
-                if ui.button("Patch JAR").clicked() {
-                    let jar_in = self.jar_in.clone();
-                    let jar_out = self.jar_out.clone().unwrap();
-                    let theme = self.theme.read().unwrap().as_ref().cloned().unwrap();
-                    let log = self.log.clone();
-                    let ctx = ctx.clone();
-                    std::thread::spawn(move || {
-                        write_theme_to_jar(jar_in, jar_out, theme, |evt| {
-                            let mut log = log.write().unwrap();
-                            if log.len() == log.capacity() {
-                                log.pop_front();
+                ui.horizontal(|ui| {
+                    if ui.button("Patch JAR").clicked() {
+                        let jar_in = self.jar_in.clone();
+                        let jar_out = self.jar_out.clone().unwrap();
+                        let theme = self.theme.read().unwrap().as_ref().cloned().unwrap();
+                        let log = self.log.clone();
+                        let ctx = ctx.clone();
+                        std::thread::spawn(move || {
+                            write_theme_to_jar(jar_in, jar_out, theme, |evt| {
+                                let mut log = log.write().unwrap();
+                                if log.len() == log.capacity() {
+                                    log.pop_front();
+                                }
+                                log.push_back(LogRecord::ThemeWriting(evt));
+                                drop(log);
+                                ctx.request_repaint();
+                            })
+                        });
+                    }
+
+                    // ui.add_space(ui.available_size().x);
+
+                    ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Import Berikai JSON").clicked() {
+                            self.file_dialog.select_file();
+                        }
+
+                        // Update the dialog and check if the user selected a file
+                        if let Some(path) = self.file_dialog.update(ctx).selected() {
+                            let file = File::open(path).unwrap();
+                            let reader = BufReader::new(file);
+                            let berikai_theme: BerikaiTheme = serde_json::from_reader(reader).unwrap();
+                            if let Some(theme) = self.theme.write().unwrap().as_mut() {
+                                for (name, color) in berikai_theme.window.iter().chain(berikai_theme.arranger.iter()) {
+                                    let rgba = HexColor::from_str(&color).unwrap().color().to_srgba_unmultiplied();
+                                    let hsva = Hsva::from_srgba_unmultiplied(rgba);
+                                    theme.named_colors.insert(name.clone(), NamedColor::Absolute(AbsoluteColor {
+                                        h: hsva.h,
+                                        s: hsva.s,
+                                        v: hsva.v,
+                                        a: hsva.a,
+                                        compositing_mode: None,
+                                    }));
+                                }
                             }
-                            log.push_back(LogRecord::ThemeWriting(evt));
-                            drop(log);
-                            ctx.request_repaint();
-                        })
+                        }
                     });
-                }
+                });
             });
 
         egui::SidePanel::left("Color Picker")
@@ -296,38 +359,36 @@ impl App for MyApp {
                         theme.as_mut().unwrap().named_colors.get_mut(color_name)
                     {
                         if let Some(compositing_mode) = &absolute_color.compositing_mode {
-                            ui.label(format!("Compositing: {:?}", compositing_mode));
+                            ui.colored_label(
+                                ui.ctx().style().visuals.weak_text_color(),
+                                format!("Compositing: {:?}", compositing_mode),
+                            );
+                        } else {
+                            ui.colored_label(
+                                ui.ctx().style().visuals.weak_text_color(),
+                                "Compositing: Unspecified",
+                            );
                         }
-                        let mut hsva = Hsva::new(absolute_color.h, absolute_color.s, absolute_color.v, absolute_color.a);
+                        let mut hsva = Hsva::new(
+                            absolute_color.h,
+                            absolute_color.s,
+                            absolute_color.v,
+                            absolute_color.a,
+                        );
 
-                        ui.spacing_mut().slider_width = 314.0;
-                        if egui::color_picker::color_picker_hsva_2d(ui, &mut hsva, egui::color_picker::Alpha::OnlyBlend) {
-                            absolute_color.h = hsva.h;
-                            absolute_color.s = hsva.s;
-                            absolute_color.v = hsva.v;
-                            absolute_color.a = hsva.a;
-                        }
-
-                        // egui::color_picker::color_picker_color32(ui, &mut srgba, egui::color_picker::Alpha::OnlyBlend);
-
-                        // let widget_rect =
-                        //     egui::Rect::from_min_size(ui.min_rect().min, ui.available_size());
-
-                        // ui.add_sized(ui.available_size(), |ui: &mut Ui| {
-                        //     let (rect, resp) = ui.allocate_at_least([100.0, 100.0].into(), Sense::click_and_drag());
-                        //     if color_picker_hsva_2d(
-                        //         ui,
-                        //         &mut hsva,
-                        //         egui::color_picker::Alpha::OnlyBlend,
-                        //     ) {
-                        //         let rgba = hsva.to_srgba_unmultiplied();
-                        //         absolute_color.r = rgba[0];
-                        //         absolute_color.g = rgba[1];
-                        //         absolute_color.b = rgba[2];
-                        //         absolute_color.a = rgba[3];
-                        //     }
-                        //     resp
-                        // });
+                        ui.spacing_mut().slider_width = 266.0;
+                        Frame::none().inner_margin(24.0).show(ui, |ui| {
+                            if egui::color_picker::color_picker_hsva_2d(
+                                ui,
+                                &mut hsva,
+                                egui::color_picker::Alpha::OnlyBlend,
+                            ) {
+                                absolute_color.h = hsva.h;
+                                absolute_color.s = hsva.s;
+                                absolute_color.v = hsva.v;
+                                absolute_color.a = hsva.a;
+                            }
+                        });
                     }
                 }
             });
@@ -338,9 +399,15 @@ impl App for MyApp {
             .resizable(false)
             .show(ctx, |ui| {
                 let log = self.log.read().unwrap();
-                for rec in log.iter() {
-                    ui.label(format!("{:?}", rec));
-                }
+
+                ScrollArea::vertical().show(ui, |ui| {
+                    for rec in log.iter() {
+                        ui.label(format!("{:?}", rec));
+                    }
+                    // if let Some(theme) = self.theme.read().unwrap().as_ref() {
+                    //     ui.label(format!("{:#?}", theme));
+                    // }
+                });
             });
 
         egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
