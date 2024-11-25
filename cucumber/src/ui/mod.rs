@@ -590,12 +590,9 @@ impl App for MyApp {
                                             1.0,
                                         )
                                         .to_srgb();
-                                        dbg!(r, g, b);
                                         let rgb =
                                             colorsys::Rgb::from((r as f64, g as f64, b as f64));
-                                        dbg!(&rgb);
                                         let hsl = colorsys::Hsl::from(rgb);
-                                        dbg!(&hsl);
                                         let h = (hsl.hue() + dh as f64).rem_euclid(360.0);
                                         let s = (hsl.saturation() / 100.0 + ds as f64)
                                             .clamp(0.0, 1.0)
@@ -603,11 +600,8 @@ impl App for MyApp {
                                         let l = (hsl.lightness() / 100.0 + dv as f64 * 0.5)
                                             .clamp(0.0, 1.0)
                                             * 100.0;
-                                        dbg!(&h, &s, &l);
                                         let hsl = colorsys::Hsl::new(h, s, l, None);
-                                        dbg!(&hsl);
                                         let rgb = colorsys::Rgb::from(hsl);
-                                        dbg!(&rgb);
 
                                         let new_fill = format!(
                                             "#{:02X}{:02X}{:02X}{:02X}",
@@ -616,8 +610,6 @@ impl App for MyApp {
                                             (rgb.blue()) as u8,
                                             255
                                         );
-                                        dbg!(&new_fill);
-                                        debug!("-----");
                                         element
                                             .attributes
                                             .insert("fill".to_string(), new_fill.to_string());
