@@ -53,7 +53,7 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn patch_class(class: &mut Class<'_>) {
+pub fn patch_class(class: &mut Class<'_>) {
     for method in &mut class.methods {
         let Some(attr) = method.attrs.first_mut() else { continue; };
         let classfile::attrs::AttrBody::Code((code_1, _code_2)) = &mut attr.body else { continue; };

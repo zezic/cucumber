@@ -22,6 +22,7 @@ use krakatau2::{
 };
 use types::ThemeLoadingEvent;
 
+pub mod patching;
 pub mod types;
 pub mod ui;
 
@@ -642,7 +643,7 @@ impl MethodSignatureKind {
             MethodSignatureKind::Si => ColorComponents::Grayscale(int(1)),
             MethodSignatureKind::Siii => ColorComponents::Rgbi(int(3), int(2), int(1)),
             MethodSignatureKind::Siiii => ColorComponents::Rgbai(int(4), int(3), int(2), int(1)),
-            MethodSignatureKind::Sfff => ColorComponents::Rgbf(float(3), float(2), float(1)),
+            MethodSignatureKind::Sfff => ColorComponents::Hsvf(float(3), float(2), float(1)),
             MethodSignatureKind::SRfff => unimplemented!(),
             MethodSignatureKind::SSfff => {
                 let ix = &bytecode.0.get(idx - 4).unwrap().1;
@@ -675,7 +676,7 @@ pub enum ColorComponents {
     Grayscale(u8),
     Rgbi(u8, u8, u8),
     Rgbai(u8, u8, u8, u8),
-    Rgbf(f32, f32, f32),
+    Hsvf(f32, f32, f32),
     Rgbaf(f32, f32, f32, f32),
     Rgbad(f64, f64, f64, f64),
     #[allow(dead_code)]
@@ -689,7 +690,7 @@ impl ColorComponents {
             ColorComponents::Grayscale(_) => 255,
             ColorComponents::Rgbi(_, _, _) => 255,
             ColorComponents::Rgbai(_, _, _, a) => *a,
-            ColorComponents::Rgbf(_, _, _) => 255,
+            ColorComponents::Hsvf(_, _, _) => 255,
             ColorComponents::Rgbaf(_, _, _, a) => (a * 255.0) as u8,
             ColorComponents::Rgbad(_, _, _, a) => (a * 255.0) as u8,
             ColorComponents::RefAndAdjust(_, _, _, _) => return None,
@@ -719,8 +720,11 @@ impl ColorComponents {
             ColorComponents::Grayscale(v) => (*v, *v, *v),
             ColorComponents::Rgbi(r, g, b) => (*r, *g, *b),
             ColorComponents::Rgbai(r, g, b, _a) => (*r, *g, *b),
-            ColorComponents::Rgbf(r, g, b) => {
-                ((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
+            ColorComponents::Hsvf(h, s, v) => {
+                // TODO: convert HSV to RGB!
+                let color = colorsys::Hsl::new(*h as f64, *s as f64, *v as f64, None);
+                let color = colorsys::Rgb::from(color);
+                ((color.red() * 255.0) as u8, (color.green() * 255.0) as u8, (color.blue() * 255.0) as u8)
             }
             ColorComponents::RefAndAdjust(_, _, _, _) => todo!(),
             ColorComponents::StringAndAdjust(ref_name, h, s, v) => {
@@ -1151,7 +1155,7 @@ impl PaletteColorMethods {
             ColorComponents::Grayscale(_) => &self.grayscale_i,
             ColorComponents::Rgbi(_, _, _) => &self.rgb_i,
             ColorComponents::Rgbai(_, _, _, _) => &self.rgba_i,
-            ColorComponents::Rgbf(_, _, _) => &self.rgb_f,
+            ColorComponents::Hsvf(_, _, _) => &self.rgb_f,
             ColorComponents::Rgbaf(_, _, _, _) => unreachable!(),
             ColorComponents::Rgbad(_, _, _, _) => unreachable!(),
             ColorComponents::RefAndAdjust(_, _, _, _) => &self.ref_hsv_f,

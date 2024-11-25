@@ -9,7 +9,7 @@ use eframe::{
 use krakatau2::{file_output_util::Writer, lib::{classfile, ParserOptions}, zip};
 use anyhow::anyhow;
 
-use crate::{extract_general_goodies, reasm, replace_named_color, types::{CucumberBitwigTheme, NamedColor, ThemeLoadingEvent}, ColorComponents};
+use crate::{extract_general_goodies, patching::patch_class, reasm, replace_named_color, types::{CucumberBitwigTheme, NamedColor, ThemeLoadingEvent}, ColorComponents};
 
 pub struct MyApp {
     jar_in: String,
@@ -50,6 +50,21 @@ fn write_theme_to_jar(
 
     let mut general_goodies = extract_general_goodies(&mut zip, |_| {})?;
     let mut patched_classes = HashMap::new();
+
+    let mut file = zip.by_name(&general_goodies.init_class)?;
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer)?;
+    let mut class = classfile::parse(
+        &buffer,
+        ParserOptions {
+            no_short_code_attr: true,
+        },
+    )
+    .map_err(|err| anyhow!("Parse: {:?}", err))?;
+    patch_class(&mut class);
+    let patched = reasm(file.name(), &class).unwrap();
+    patched_classes.insert(file.name().to_string(), patched);
+    drop(file);
 
     let named_colors_copy = general_goodies.named_colors.clone();
     for clr in named_colors_copy {
