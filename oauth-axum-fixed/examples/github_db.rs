@@ -17,7 +17,7 @@ use tokio_postgres::{Client, NoTls};
 #[tokio::main]
 async fn main() {
     dotenv::from_filename("examples/.env").ok();
-    println!("Starting server...");
+    debug!("Starting server...");
 
     let (client, connection) = tokio_postgres::connect(
         "postgresql://admin:password123@172.18.0.2:5432/rust_hs256",
@@ -43,7 +43,7 @@ async fn main() {
     // so spawn it off to run on its own.
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
+            edebug!("connection error: {}", e);
         }
     });
 
@@ -52,7 +52,7 @@ async fn main() {
         .route("/api/v1/github/callback", get(callback))
         .with_state(Arc::new(client));
 
-    println!("🚀 Server started successfully");
+    debug!("🚀 Server started successfully");
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
         .await
         .unwrap();

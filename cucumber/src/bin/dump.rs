@@ -9,6 +9,7 @@ use cucumber::{
     types::{AbsoluteColor, ColorConst, CucumberBitwigTheme, NamedColor, UiTarget},
 };
 use krakatau2::zip;
+use tracing::debug;
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = env::args().collect();
@@ -62,7 +63,7 @@ fn main() -> anyhow::Result<()> {
                 .constant_refs
                 .insert(UiTarget::Playhead, timeline_color_const);
         } else {
-            println!(
+            debug!(
                 "FOUND HSV COLOR, NOT ADDING TO THEME: {:?}",
                 timeline_const.color_comps
             );

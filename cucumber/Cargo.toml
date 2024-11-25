@@ -19,6 +19,8 @@ md5 = "0.7.0"
 rand = "0.8.5"
 serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
+tracing = "0.1.40"
+tracing-subscriber = "0.3.18"
 xml-rs = "0.8.16"
 xmltree = "0.11.0"
 

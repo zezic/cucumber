@@ -24,6 +24,7 @@ use krakatau2::{
     zip,
 };
 use resvg::usvg::{Color, Fill, NodeKind, TreeParsing};
+use tracing::debug;
 use xml::EmitterConfig;
 use xmltree::Element;
 
@@ -138,7 +139,7 @@ fn write_theme_to_jar(
             )
             .is_none()
             {
-                println!("failed to replace in {}", file_name_w_ext);
+                debug!("failed to replace in {}", file_name_w_ext);
             }
 
             let new_buffer = reasm(&file_name_w_ext, &class)?;
@@ -494,7 +495,7 @@ impl App for MyApp {
                                     &mut hsva,
                                     egui::color_picker::Alpha::OnlyBlend,
                                 ) {
-                                    println!("### {:?} -> {:?}", absolute_color, hsva);
+                                    debug!("### {:?} -> {:?}", absolute_color, hsva);
                                     absolute_color.h = hsva.h;
                                     absolute_color.s = hsva.s;
                                     absolute_color.v = hsva.v;
@@ -529,7 +530,7 @@ impl App for MyApp {
 
         egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
             if ui.button("hehehe").clicked() {
-                println!("CLICK");
+                debug!("CLICK");
             }
             let avail_size = ui.available_size();
             if avail_size != self.last_mockup_size
@@ -616,7 +617,7 @@ impl App for MyApp {
                                             255
                                         );
                                         dbg!(&new_fill);
-                                        println!("-----");
+                                        debug!("-----");
                                         element
                                             .attributes
                                             .insert("fill".to_string(), new_fill.to_string());

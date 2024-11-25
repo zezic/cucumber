@@ -16,6 +16,9 @@ struct Args {
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
+    use tracing_subscriber;
+    tracing_subscriber::fmt::init();
+
     use eframe::egui;
 
     let args = Args::parse();

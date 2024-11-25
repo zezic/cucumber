@@ -21,6 +21,7 @@ use krakatau2::{
     },
     zip::{self, ZipArchive},
 };
+use tracing::debug;
 use types::{CompositingMode, ThemeLoadingEvent};
 
 pub mod exchange;
@@ -71,7 +72,7 @@ fn main() -> anyhow::Result<()> {
 
     let mut general_goodies = extract_general_goodies(&mut zip, |_| {})?;
 
-    println!("STAGE 1: {}", start.elapsed().as_millis());
+    debug!("STAGE 1: {}", start.elapsed().as_millis());
     let start = Instant::now();
 
     let colors_to_randomize = general_goodies.named_colors.clone();
@@ -113,7 +114,7 @@ fn main() -> anyhow::Result<()> {
         )
         .is_none()
         {
-            println!("failed to replace in {}", file_name_w_ext);
+            debug!("failed to replace in {}", file_name_w_ext);
         }
 
         let new_buffer = reasm(&file_name_w_ext, &class)?;
@@ -146,7 +147,7 @@ fn main() -> anyhow::Result<()> {
         patched_classes.insert(file_name_w_ext, new_buffer);
     }
 
-    println!("STAGE 2: {}", start.elapsed().as_millis());
+    debug!("STAGE 2: {}", start.elapsed().as_millis());
     let start = Instant::now();
 
     let mut writer = Writer::new(Path::new(output_jar))?;
@@ -166,8 +167,8 @@ fn main() -> anyhow::Result<()> {
 
         writer.write(Some(&name), &buffer)?;
     }
-    println!("STAGE 3: {}", start.elapsed().as_millis());
-    println!("TOTAL: {}", pgm_start.elapsed().as_millis());
+    debug!("STAGE 3: {}", start.elapsed().as_millis());
+    debug!("TOTAL: {}", pgm_start.elapsed().as_millis());
 
     Ok(())
 }
@@ -260,7 +261,7 @@ fn replace_named_color<'a>(
         .iter_mut()
         .find(|color| color.color_name == name)?;
 
-    println!("### REPLACING {}: {:?}", name, new_value);
+    debug!("### REPLACING {}: {:?}", name, new_value);
 
     let method_descr_to_find = match compositing_mode {
         Some(CompositingMode::BlendedOnBackground) => {
@@ -364,7 +365,7 @@ fn replace_named_color<'a>(
         };
         if text == name {
             if name == "Knob Body" {
-                println!("### TEXT == NAME {:?}", name);
+                debug!("### TEXT == NAME {:?}", name);
             }
 
             loop {
@@ -444,18 +445,18 @@ pub fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
         if let Some(useful_file_type) = is_useful_file(&class) {
             match useful_file_type {
                 UsefulFileType::MainPalette => {
-                    println!("Found main palette: {}", file_name);
+                    debug!("Found main palette: {}", file_name);
                     if let Some(methods) = extract_palette_color_methods(&class) {
-                        // println!("{:#?}", methods);
+                        // debug!("{:#?}", methods);
                         palette_color_meths = Some(methods);
                     }
                 }
                 UsefulFileType::Init => {
-                    println!("Found init: {}", file_name);
+                    debug!("Found init: {}", file_name);
                     init_class_name = Some(file_name.clone());
                 }
                 UsefulFileType::RawColor => {
-                    println!("Found raw color: {}", file_name);
+                    debug!("Found raw color: {}", file_name);
                     if let Some(goodies) = extract_raw_color_goodies(&class) {
                         raw_color_goodies = Some(goodies);
                     }
@@ -465,7 +466,7 @@ pub fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
                     fmim_idx: class_cp_idx,
                     cnst_name,
                 } => {
-                    println!("Found timeline color const: {}", file_name);
+                    debug!("Found timeline color const: {}", file_name);
                     timeline_color_ref = Some(TimelineColorReference {
                         class_filename: file_name.clone(),
                         const_name: cnst_name,
@@ -479,7 +480,7 @@ pub fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
         drop(file);
     }
     // progress_bar.finish();
-    println!("------------");
+    debug!("------------");
 
     let mut all_named_colors = Vec::new();
 
@@ -802,7 +803,7 @@ impl ColorComponents {
             ColorComponents::Rgbi(r, g, b) => (*r, *g, *b),
             ColorComponents::Rgbai(r, g, b, _a) => (*r, *g, *b),
             ColorComponents::Hsvf(h, s, v) => {
-                println!("It's dh ds dv, it's not absolute color");
+                debug!("It's dh ds dv, it's not absolute color");
                 return None;
             }
             ColorComponents::RefAndAdjust(_, _, _, _) => todo!(),
@@ -1087,7 +1088,7 @@ fn scan_for_named_color_defs(
                 continue;
             };
             if filename.contains("dcd") {
-                println!("### METHOD_DESCR: {:?}", method_descr);
+                debug!("### METHOD_DESCR: {:?}", method_descr);
             }
 
             for (known_meth, compositing_mode) in &all_meths {
@@ -1095,7 +1096,7 @@ fn scan_for_named_color_defs(
                     if let Some(sig_kind) = &known_meth.signature_kind {
                         let offset = sig_kind.color_name_ix_offset();
                         let Some((_, ix)) = bytecode.0.get(idx - offset) else {
-                            println!("{}: offset out of bounds", filename);
+                            debug!("{}: offset out of bounds", filename);
                             continue;
                         };
                         let ldc_id = match ix {
@@ -1105,7 +1106,7 @@ fn scan_for_named_color_defs(
                         };
                         if let Some(id) = ldc_id {
                             if filename.contains("dcd") {
-                                println!("### LDC ID IS: {:?}", id);
+                                debug!("### LDC ID IS: {:?}", id);
                             }
                             let text = find_utf_ldc(&rp, id);
                             let components = sig_kind.extract_color_components(idx, bytecode, &rp);
@@ -1113,7 +1114,7 @@ fn scan_for_named_color_defs(
                             // If not in-place color name defined, then it's a method call inside other delegate method
                             // so it's not interesting to us (I guess?).
                             if let Some(color_name) = &text {
-                                println!("### FOUND COLOR: {}", color_name);
+                                debug!("### FOUND COLOR: {}", color_name);
                                 found.push(NamedColor {
                                     class_name: class_name.clone(),
                                     method_idx,
@@ -1123,11 +1124,11 @@ fn scan_for_named_color_defs(
                                 });
                                 known_colors.insert(color_name.clone(), components);
                             } else {
-                                println!("### NOT FOUND COLOR ##################################################");
+                                debug!("### NOT FOUND COLOR ##################################################");
                             }
                         }
                     } else {
-                        println!("No signature kind prepared :(");
+                        debug!("No signature kind prepared :(");
                     }
                 }
             }
@@ -1144,7 +1145,7 @@ fn debug_print_color(
     known_colors: &HashMap<String, ColorComponents>,
 ) {
     let Some((r, g, b)) = components.to_rgb(&known_colors) else {
-        println!("HSV Color: {:?}", components);
+        debug!("HSV Color: {:?}", components);
         return;
     };
     use colored::Colorize;
@@ -1159,7 +1160,7 @@ fn debug_print_color(
     } else {
         format!("{} {}", comp_line, color_name).on_truecolor(r, g, b)
     };
-    println!("{} ({})", debug_line, class_name);
+    debug!("{} ({})", debug_line, class_name);
 }
 
 #[derive(Debug)]
@@ -1302,12 +1303,12 @@ fn extract_raw_color_goodies(class: &Class) -> Option<RawColorGoodies> {
 
     // At first, find all popular constructors
     for method in &class.methods {
-        // println!("METH IDX: {}", method.name);
+        // debug!("METH IDX: {}", method.name);
         let Some(meth_name) = class.cp.utf8(method.name).and_then(parse_utf8) else {
             continue;
         };
-        // println!("METH: {}", meth_name);
-        // println!("METH NAME: {}", meth_name);
+        // debug!("METH: {}", meth_name);
+        // debug!("METH NAME: {}", meth_name);
         let Some(attr) = method.attrs.first() else {
             continue;
         };
@@ -1356,12 +1357,12 @@ fn extract_raw_color_goodies(class: &Class) -> Option<RawColorGoodies> {
 
     // Now, find important constants in class initializer
     for method in &class.methods {
-        // println!("METH IDX: {}", method.name);
+        // debug!("METH IDX: {}", method.name);
         let Some(meth_name) = class.cp.utf8(method.name).and_then(parse_utf8) else {
             continue;
         };
-        // println!("METH: {}", meth_name);
-        // println!("METH NAME: {}", meth_name);
+        // debug!("METH: {}", meth_name);
+        // debug!("METH NAME: {}", meth_name);
         let Some(attr) = method.attrs.first() else {
             continue;
         };
@@ -1397,14 +1398,14 @@ fn extract_raw_color_goodies(class: &Class) -> Option<RawColorGoodies> {
                         break;
                     }
                 }
-                // println!("{:?}", desc);
+                // debug!("{:?}", desc);
                 // let const_line = rp.cpool.get(*method_id as usize).unwrap();
                 // let ConstData::Utf8(utf_data) = &const_line.data else {
                 //     panic!("Can't find method desc");
                 // };
                 // let sig = utf_data.s.to_string();
 
-                // println!("{} {:?} {:?}", pos, ix, const_line);
+                // debug!("{} {:?} {:?}", pos, ix, const_line);
             }
         }
         // Static init, should contain statics initialization
@@ -1417,12 +1418,12 @@ fn extract_raw_color_goodies(class: &Class) -> Option<RawColorGoodies> {
 }
 
 fn extract_palette_color_methods(class: &Class) -> Option<PaletteColorMethods> {
-    // println!("Searching palette color methods");
+    // debug!("Searching palette color methods");
 
     let rp = init_refprinter(&class.cp, &class.attrs);
 
     let _class_name = class.cp.clsutf(class.this).and_then(parse_utf8)?;
-    // println!("Class >>>>> {}", class_name);
+    // debug!("Class >>>>> {}", class_name);
 
     let main_palette_method = class.methods.iter().skip(1).next()?;
     let attr = main_palette_method.attrs.first()?;

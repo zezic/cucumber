@@ -68,7 +68,7 @@ pub struct QueryAxumCallback {
 #[tokio::main]
 async fn main() {
     dotenv::from_filename("examples/.env").ok();
-    println!("Starting server...");
+    debug!("Starting server...");
 
     let state = Arc::new(AxumState::new());
     let app = Router::new()
@@ -76,7 +76,7 @@ async fn main() {
         .route("/api/v1/twitter/callback", get(callback))
         .layer(Extension(state.clone()));
 
-    println!("🚀 Server started successfully");
+    debug!("🚀 Server started successfully");
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
         .await
         .unwrap();
@@ -113,7 +113,7 @@ pub async fn callback(
     Extension(state): Extension<Arc<AxumState>>,
     Query(queries): Query<QueryAxumCallback>,
 ) -> String {
-    println!("{:?}", state.clone().get_all_items());
+    debug!("{:?}", state.clone().get_all_items());
     // GET DATA FROM DB OR MEMORY
     // get data using state as ID
     let item = state.get(queries.state.clone());

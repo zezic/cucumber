@@ -32,7 +32,7 @@ fn main() -> Result<()> {
 
     let ask_file = &args[3];
 
-    println!("ASK: {}", ask_file);
+    debug!("ASK: {}", ask_file);
 
     let ableton_color_defs = ask::parse_ask(&ask_file).unwrap();
     let mut html = String::new();
@@ -103,7 +103,7 @@ fn main() -> Result<()> {
     progress_bar.finish();
 
     let dur = Instant::now().duration_since(now);
-    println!("Patched: {:?}", dur);
+    debug!("Patched: {:?}", dur);
 
     let mut writer = Writer::new(Path::new(output_jar))?;
 
@@ -114,7 +114,7 @@ fn main() -> Result<()> {
     }
 
     let dur = Instant::now().duration_since(now);
-    println!("Writed: {:?}", dur);
+    debug!("Writed: {:?}", dur);
 
     fs::write("bw_theme.html", &html).expect("Unable to write theme file");
 
@@ -204,7 +204,7 @@ fn find_rgba_method_in_data(data: &[u8]) -> Option<MethodDescription> {
 }
 
 fn find_method_by_sig(class: &Class<'_>, sig_start: &str) -> Option<(MethodId, MethodDescription)> {
-    println!("Searching RGB method");
+    debug!("Searching RGB method");
 
     let rp = init_refprinter(&class.cp, &class.attrs);
 
@@ -294,13 +294,13 @@ fn instr_to_u8(instr: &Instr) -> u8 {
 }
 
 fn colorize_class<'a>(name: &str, class: &mut Class<'a>, method_idx: usize, rgba_method_desc: &'a MethodDescription, bw_abl_mapping: &HashMap<&str, (u8, u8, u8, u8)>) -> Result<Vec<ColorDef>> {
-    println!("Colorizing {}", name);
+    debug!("Colorizing {}", name);
     let mut color_defs = vec![];
 
     let (rgba_method_id, rgba_method_desc) = match find_method_by_sig(class, "(Ljava/lang/String;IIII)") {
         Some(met) => met,
         None => {
-            println!("Can't find RGBA method, adding CP entries.");
+            debug!("Can't find RGBA method, adding CP entries.");
 
             let class_utf_id = class.cp.0.len();
             class.cp.0.push(Const::Utf8(BStr(rgba_method_desc.class.as_bytes())));
@@ -324,7 +324,7 @@ fn colorize_class<'a>(name: &str, class: &mut Class<'a>, method_idx: usize, rgba
         }
     };
 
-    println!("RGBA METHOD: {} {:?}", rgba_method_id, rgba_method_desc);
+    debug!("RGBA METHOD: {} {:?}", rgba_method_id, rgba_method_desc);
 
     const COLOR_DEFINE_SIGS: &[(&str, usize, ColorMethod)] = &[
         ("(Ljava/lang/String;I)", 1, ColorMethod::Grayscale),
@@ -489,7 +489,7 @@ fn patch_class(name: &str, class: &mut Class<'_>) {
                 continue;
             }
             if let [(_, ix), (_, Instr::Sipush(5000)), (_, Instr::IfIcmple(_))] = &mut ixs {
-                println!("Patching integrity check in {}", name);
+                debug!("Patching integrity check in {}", name);
                 *ix = Instr::Sipush(0);
             }
         }
