@@ -250,7 +250,10 @@ fn replace_named_color<'a>(
     palette_color_meths: &'a PaletteColorMethods,
     compositing_mode: Option<CompositingMode>,
 ) -> Option<()> {
-    if !matches!(new_value, ColorComponents::Rgbai(..) | ColorComponents::Hsvf(..)) {
+    if !matches!(
+        new_value,
+        ColorComponents::Rgbai(..) | ColorComponents::Hsvf(..)
+    ) {
         todo!("Only Rgbai and Hsvf supported for the moment");
     }
     let named_color = named_colors
@@ -276,7 +279,10 @@ fn replace_named_color<'a>(
     ) {
         Some(met) => met,
         None => {
-            if matches!(compositing_mode, Some(CompositingMode::RelativeToBackground)) {
+            if matches!(
+                compositing_mode,
+                Some(CompositingMode::RelativeToBackground)
+            ) {
                 unimplemented!("Not done yet, but it's easy");
             }
             let rgbai_method_desc = &palette_color_meths.rgba_i_absolute;
@@ -348,7 +354,9 @@ fn replace_named_color<'a>(
         let id = match new_bytecode.last()?.1 {
             Instr::Ldc(id) => id as u16,
             Instr::LdcW(id) => id as u16,
-            _ => { continue; }
+            _ => {
+                continue;
+            }
         };
 
         let Some(text) = find_utf_ldc(&rp, id as u16) else {
@@ -374,7 +382,10 @@ fn replace_named_color<'a>(
             }
             if let Some(floats) = floats_to_add {
                 for float in floats {
-                    class.cp.0.push(Const::Float(u32::from_be_bytes(float.float.to_be_bytes())));
+                    class
+                        .cp
+                        .0
+                        .push(Const::Float(u32::from_be_bytes(float.float.to_be_bytes())));
                 }
             }
 
@@ -610,24 +621,18 @@ impl IxToFloat for Instr {
             Instr::Fconst2 => return 2.0,
             Instr::Dconst0 => return 0.0,
             Instr::Dconst1 => return 1.0,
-            Instr::Ldc(ind) => {
-                *ind as u16
-            }
-            Instr::LdcW(ind) => {
-                *ind
-            }
+            Instr::Ldc(ind) => *ind as u16,
+            Instr::LdcW(ind) => *ind,
             x => unimplemented!("instr: {:?}", x),
         };
         let data = refprinter.cpool.get(id as usize).unwrap();
         match &data.data {
-            ConstData::Prim(_prim_tag, text) => {
-                match text.trim_end_matches("f").parse::<f32>() {
-                    Ok(val) => val,
-                    Err(err) => {
-                        panic!("err parse f32 [{}]: {}", text, err);
-                    }
+            ConstData::Prim(_prim_tag, text) => match text.trim_end_matches("f").parse::<f32>() {
+                Ok(val) => val,
+                Err(err) => {
+                    panic!("err parse f32 [{}]: {}", text, err);
                 }
-            }
+            },
             _ => unimplemented!(),
         }
     }
@@ -754,7 +759,10 @@ impl ColorComponents {
         })
     }
 
-    fn to_ixs(&self, next_free_cpool_idx: usize) -> (Vec<Instr>, Option<Vec<FloatToAddToConstantPool>>) {
+    fn to_ixs(
+        &self,
+        next_free_cpool_idx: usize,
+    ) -> (Vec<Instr>, Option<Vec<FloatToAddToConstantPool>>) {
         match self {
             ColorComponents::Rgbai(r, g, b, a) => {
                 let mut ixs = vec![];
@@ -766,7 +774,7 @@ impl ColorComponents {
                     }
                 }
                 (ixs, None)
-            },
+            }
             ColorComponents::Hsvf(h, s, v) => {
                 let mut ixs = vec![];
                 let mut floats = vec![];
@@ -779,11 +787,11 @@ impl ColorComponents {
                     }
                     floats.push(FloatToAddToConstantPool {
                         index,
-                        float: *comp
+                        float: *comp,
                     });
                 }
                 (ixs, Some(floats))
-            },
+            }
             _ => todo!(),
         }
     }
@@ -795,14 +803,16 @@ impl ColorComponents {
             ColorComponents::Rgbai(r, g, b, _a) => (*r, *g, *b),
             ColorComponents::Hsvf(h, s, v) => {
                 println!("It's dh ds dv, it's not absolute color");
-                return None
+                return None;
             }
             ColorComponents::RefAndAdjust(_, _, _, _) => todo!(),
             ColorComponents::StringAndAdjust(ref_name, h, s, v) => {
                 let Some(known) = known_colors.get(ref_name) else {
                     panic!("Unknown color ref: {}", ref_name);
                 };
-                let Some((r, g, b)) = known.to_rgb(&known_colors) else { return None };
+                let Some((r, g, b)) = known.to_rgb(&known_colors) else {
+                    return None;
+                };
                 let mut rgb = Rgb::from((r, g, b));
                 rgb.adjust_hue(*h as f64);
                 rgb.saturate(SaturationInSpace::Hsl(*s as f64 * 100.));
@@ -1089,7 +1099,7 @@ fn scan_for_named_color_defs(
                             continue;
                         };
                         let ldc_id = match ix {
-                            Instr::Ldc(id) => { Some(*id as u16) },
+                            Instr::Ldc(id) => Some(*id as u16),
                             Instr::LdcW(id) => Some(*id),
                             _other => None,
                         };
@@ -1098,8 +1108,7 @@ fn scan_for_named_color_defs(
                                 println!("### LDC ID IS: {:?}", id);
                             }
                             let text = find_utf_ldc(&rp, id);
-                            let components =
-                                sig_kind.extract_color_components(idx, bytecode, &rp);
+                            let components = sig_kind.extract_color_components(idx, bytecode, &rp);
 
                             // If not in-place color name defined, then it's a method call inside other delegate method
                             // so it's not interesting to us (I guess?).

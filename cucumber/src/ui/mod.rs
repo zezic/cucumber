@@ -1,11 +1,18 @@
 use std::{
-    borrow::Cow, collections::{HashMap, HashSet, VecDeque}, fs::File, io::{BufReader, Read}, path::Path, str::FromStr, sync::{Arc, RwLock}
+    borrow::Cow,
+    collections::{HashMap, HashSet, VecDeque},
+    fs::File,
+    io::{BufReader, Read},
+    path::Path,
+    str::FromStr,
+    sync::{Arc, RwLock},
 };
 
 use anyhow::anyhow;
 use eframe::{
     egui::{
-        self, color_picker::color_picker_hsva_2d, ecolor::HexColor, Color32, Context, Frame, Layout, Rect, Response, ScrollArea, Sense, TextureOptions, Ui, Vec2
+        self, color_picker::color_picker_hsva_2d, ecolor::HexColor, Color32, Context, Frame,
+        Layout, Rect, Response, ScrollArea, Sense, TextureOptions, Ui, Vec2,
     },
     epaint::Hsva,
     App,
@@ -21,7 +28,12 @@ use xml::EmitterConfig;
 use xmltree::Element;
 
 use crate::{
-    exchange::BerikaiTheme, extract_general_goodies, patching::patch_class, reasm, replace_named_color, types::{AbsoluteColor, CompositingMode, CucumberBitwigTheme, NamedColor, ThemeLoadingEvent}, ColorComponents
+    exchange::BerikaiTheme,
+    extract_general_goodies,
+    patching::patch_class,
+    reasm, replace_named_color,
+    types::{AbsoluteColor, CompositingMode, CucumberBitwigTheme, NamedColor, ThemeLoadingEvent},
+    ColorComponents,
 };
 
 pub struct MyApp {
@@ -36,7 +48,7 @@ pub struct MyApp {
     last_mockup_size: Vec2,
     mockup: Vec<u8>,
     img_src: egui::ImageSource<'static>,
-    changed_colors: HashSet<String>,
+    changed_colors: Arc<RwLock<HashSet<String>>>,
 }
 
 #[derive(Debug)]
@@ -111,7 +123,9 @@ fn write_theme_to_jar(
             let [r, g, b, a] = Hsva::new(repl.h, repl.s, repl.v, repl.a).to_srgba_unmultiplied();
 
             let new_value = match repl.compositing_mode {
-                Some(CompositingMode::RelativeToBackground) => ColorComponents::Hsvf(repl.h, repl.s, repl.v),
+                Some(CompositingMode::RelativeToBackground) => {
+                    ColorComponents::Hsvf(repl.h, repl.s, repl.v)
+                }
                 _ => ColorComponents::Rgbai(r, g, b, a),
             };
             if replace_named_color(
@@ -195,10 +209,14 @@ impl MyApp {
         let jar_in = jar_in.unwrap();
         let theme = Arc::new(RwLock::new(None));
         let log = Arc::new(RwLock::new(VecDeque::with_capacity(256)));
+
+        let changed_colors = Arc::new(RwLock::new(HashSet::new()));
+
         {
             let jar_in = jar_in.clone();
             let log = log.clone();
             let theme = theme.clone();
+            let changed_colors = changed_colors.clone();
             std::thread::spawn(move || {
                 let loaded_theme = load_theme_from_jar(jar_in, |prog| {
                     let mut log = log.write().unwrap();
@@ -210,8 +228,17 @@ impl MyApp {
                     ctx.request_repaint();
                 })
                 .unwrap();
+
                 let mut theme = theme.write().unwrap();
-                *theme = Some(loaded_theme);
+                *theme = Some(loaded_theme.clone());
+                drop(theme);
+
+                let mut changed_colors = changed_colors.write().unwrap();
+                for (name, _color) in &loaded_theme.named_colors {
+                    changed_colors.insert(name.clone());
+                }
+                drop(changed_colors);
+
                 ctx.request_repaint();
             });
         }
@@ -234,8 +261,8 @@ impl MyApp {
             file_dialog: FileDialog::new(),
             last_mockup_size: Vec2::default(),
             mockup: Vec::from(include_bytes!("../../assets/mockup.svg")),
-            img_src: img_src,
-            changed_colors: HashSet::new(),
+            img_src,
+            changed_colors,
         })
     }
 }
@@ -340,8 +367,6 @@ impl App for MyApp {
                         });
                     }
 
-                    // ui.add_space(ui.available_size().x);
-
                     ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("Import Berikai JSON").clicked() {
                             self.file_dialog.select_file();
@@ -352,19 +377,30 @@ impl App for MyApp {
                         if let Some(path) = self.file_dialog.take_selected() {
                             let file = File::open(path).unwrap();
                             let reader = BufReader::new(file);
-                            let berikai_theme: BerikaiTheme = serde_json::from_reader(reader).unwrap();
+                            let berikai_theme: BerikaiTheme =
+                                serde_json::from_reader(reader).unwrap();
                             if let Some(theme) = self.theme.write().unwrap().as_mut() {
-                                for (name, color) in berikai_theme.window.iter().chain(berikai_theme.arranger.iter()) {
-                                    let rgba = HexColor::from_str(&color).unwrap().color().to_srgba_unmultiplied();
+                                for (name, color) in berikai_theme
+                                    .window
+                                    .iter()
+                                    .chain(berikai_theme.arranger.iter())
+                                {
+                                    let rgba = HexColor::from_str(&color)
+                                        .unwrap()
+                                        .color()
+                                        .to_srgba_unmultiplied();
                                     let hsva = Hsva::from_srgba_unmultiplied(rgba);
-                                    theme.named_colors.insert(name.clone(), NamedColor::Absolute(AbsoluteColor {
-                                        h: hsva.h,
-                                        s: hsva.s,
-                                        v: hsva.v,
-                                        a: hsva.a,
-                                        compositing_mode: None,
-                                    }));
-                                    self.changed_colors.insert(name.clone());
+                                    theme.named_colors.insert(
+                                        name.clone(),
+                                        NamedColor::Absolute(AbsoluteColor {
+                                            h: hsva.h,
+                                            s: hsva.s,
+                                            v: hsva.v,
+                                            a: hsva.a,
+                                            compositing_mode: None,
+                                        }),
+                                    );
+                                    self.changed_colors.write().unwrap().insert(name.clone());
                                 }
                             }
                         }
@@ -395,16 +431,51 @@ impl App for MyApp {
                             );
                         }
 
-                        if let Some(CompositingMode::RelativeToBackground) = absolute_color.compositing_mode {
+                        if let Some(CompositingMode::RelativeToBackground) =
+                            absolute_color.compositing_mode
+                        {
                             ui.horizontal(|ui| {
-                                if ui.add(egui::DragValue::new(&mut absolute_color.h).range(-360.0..=360.0).speed(0.1).prefix("ΔH")).changed() {
-                                    self.changed_colors.insert(color_name.clone());
+                                if ui
+                                    .add(
+                                        egui::DragValue::new(&mut absolute_color.h)
+                                            .range(-360.0..=360.0)
+                                            .speed(0.1)
+                                            .prefix("ΔH"),
+                                    )
+                                    .changed()
+                                {
+                                    self.changed_colors
+                                        .write()
+                                        .unwrap()
+                                        .insert(color_name.clone());
                                 }
-                                if ui.add(egui::DragValue::new(&mut absolute_color.s).range(-1.0..=1.0).speed(0.01).prefix("ΔS")).changed() {
-                                    self.changed_colors.insert(color_name.clone());
+                                if ui
+                                    .add(
+                                        egui::DragValue::new(&mut absolute_color.s)
+                                            .range(-1.0..=1.0)
+                                            .speed(0.01)
+                                            .prefix("ΔS"),
+                                    )
+                                    .changed()
+                                {
+                                    self.changed_colors
+                                        .write()
+                                        .unwrap()
+                                        .insert(color_name.clone());
                                 }
-                                if ui.add(egui::DragValue::new(&mut absolute_color.v).range(-1.0..=1.0).speed(0.01).prefix("ΔV")).changed() {
-                                    self.changed_colors.insert(color_name.clone());
+                                if ui
+                                    .add(
+                                        egui::DragValue::new(&mut absolute_color.v)
+                                            .range(-1.0..=1.0)
+                                            .speed(0.01)
+                                            .prefix("ΔV"),
+                                    )
+                                    .changed()
+                                {
+                                    self.changed_colors
+                                        .write()
+                                        .unwrap()
+                                        .insert(color_name.clone());
                                 }
                                 ui.add_space(5.0);
                             });
@@ -428,7 +499,10 @@ impl App for MyApp {
                                     absolute_color.s = hsva.s;
                                     absolute_color.v = hsva.v;
                                     absolute_color.a = hsva.a;
-                                    self.changed_colors.insert(color_name.clone());
+                                    self.changed_colors
+                                        .write()
+                                        .unwrap()
+                                        .insert(color_name.clone());
                                 }
                             });
                         }
@@ -458,7 +532,9 @@ impl App for MyApp {
                 println!("CLICK");
             }
             let avail_size = ui.available_size();
-            if avail_size != self.last_mockup_size || !self.changed_colors.is_empty() {
+            if avail_size != self.last_mockup_size
+                || !self.changed_colors.read().unwrap().is_empty()
+            {
                 self.last_mockup_size = avail_size;
 
                 let uri = self.img_src.uri().unwrap();
@@ -472,9 +548,13 @@ impl App for MyApp {
                         if let Some(class) = element.attributes.get("class") {
                             if class == target_class {
                                 if element.attributes.contains_key("fill") {
-                                    element.attributes.insert("fill".to_string(), new_fill.to_string());
+                                    element
+                                        .attributes
+                                        .insert("fill".to_string(), new_fill.to_string());
                                 } else {
-                                    element.attributes.insert("stop-color".to_string(), new_fill.to_string());
+                                    element
+                                        .attributes
+                                        .insert("stop-color".to_string(), new_fill.to_string());
                                 }
                             }
                         }
@@ -486,30 +566,60 @@ impl App for MyApp {
                             }
                         }
                     }
-                    fn modify_element_relative(element: &mut Element, target_class: &str, dh: f32, ds: f32, dv: f32, theme: &CucumberBitwigTheme) {
+                    fn modify_element_relative(
+                        element: &mut Element,
+                        target_class: &str,
+                        dh: f32,
+                        ds: f32,
+                        dv: f32,
+                        theme: &CucumberBitwigTheme,
+                    ) {
                         if let Some(class) = element.attributes.get("class") {
                             if class == target_class {
                                 if let Some(bg) = element.attributes.get("bg") {
-                                    if let Some((_, NamedColor::Absolute(absolute_color))) = theme.named_colors.iter().find(|(name, b)| &name.to_lowercase().replace(" ", "-") == bg) {
-                                        let [r, g, b] = Hsva::new(absolute_color.h, absolute_color.s, absolute_color.v, 1.0).to_srgb();
+                                    if let Some((_, NamedColor::Absolute(absolute_color))) =
+                                        theme.named_colors.iter().find(|(name, _b)| {
+                                            &name.to_lowercase().replace(" ", "-") == bg
+                                        })
+                                    {
+                                        let [r, g, b] = Hsva::new(
+                                            absolute_color.h,
+                                            absolute_color.s,
+                                            absolute_color.v,
+                                            1.0,
+                                        )
+                                        .to_srgb();
                                         dbg!(r, g, b);
-                                        let rgb = colorsys::Rgb::from((r as f64, g as f64, b as f64));
+                                        let rgb =
+                                            colorsys::Rgb::from((r as f64, g as f64, b as f64));
                                         dbg!(&rgb);
                                         let hsl = colorsys::Hsl::from(rgb);
                                         dbg!(&hsl);
                                         let h = (hsl.hue() + dh as f64).rem_euclid(360.0);
-                                        let s = (hsl.saturation() / 100.0 + ds as f64).clamp(0.0, 1.0) * 100.0;
-                                        let l = (hsl.lightness() / 100.0 + dv as f64 * 0.5).clamp(0.0, 1.0) * 100.0;
+                                        let s = (hsl.saturation() / 100.0 + ds as f64)
+                                            .clamp(0.0, 1.0)
+                                            * 100.0;
+                                        let l = (hsl.lightness() / 100.0 + dv as f64 * 0.5)
+                                            .clamp(0.0, 1.0)
+                                            * 100.0;
                                         dbg!(&h, &s, &l);
                                         let hsl = colorsys::Hsl::new(h, s, l, None);
                                         dbg!(&hsl);
                                         let rgb = colorsys::Rgb::from(hsl);
                                         dbg!(&rgb);
 
-                                        let new_fill = format!("#{:02X}{:02X}{:02X}{:02X}", (rgb.red()) as u8, (rgb.green()) as u8, (rgb.blue()) as u8, 255);
+                                        let new_fill = format!(
+                                            "#{:02X}{:02X}{:02X}{:02X}",
+                                            (rgb.red()) as u8,
+                                            (rgb.green()) as u8,
+                                            (rgb.blue()) as u8,
+                                            255
+                                        );
                                         dbg!(&new_fill);
                                         println!("-----");
-                                        element.attributes.insert("fill".to_string(), new_fill.to_string());
+                                        element
+                                            .attributes
+                                            .insert("fill".to_string(), new_fill.to_string());
                                     }
                                 }
                             }
@@ -518,18 +628,41 @@ impl App for MyApp {
                         // Recursively process child elements
                         for child in element.children.iter_mut() {
                             if let xmltree::XMLNode::Element(ref mut child_element) = child {
-                                modify_element_relative(child_element, target_class, dh, ds, dv, &theme);
+                                modify_element_relative(
+                                    child_element,
+                                    target_class,
+                                    dh,
+                                    ds,
+                                    dv,
+                                    &theme,
+                                );
                             }
                         }
                     }
-                    for changed_color in self.changed_colors.drain() {
-                        if let NamedColor::Absolute(repl) = theme.named_colors.get(&changed_color).as_ref().unwrap() {
-                            if let Some(CompositingMode::RelativeToBackground) = repl.compositing_mode {
-                                modify_element_relative(&mut root, &changed_color.to_lowercase().replace(" ", "-"), repl.h, repl.s, repl.v, &theme);
+                    for changed_color in self.changed_colors.write().unwrap().drain() {
+                        if let NamedColor::Absolute(repl) =
+                            theme.named_colors.get(&changed_color).as_ref().unwrap()
+                        {
+                            if let Some(CompositingMode::RelativeToBackground) =
+                                repl.compositing_mode
+                            {
+                                modify_element_relative(
+                                    &mut root,
+                                    &changed_color.to_lowercase().replace(" ", "-"),
+                                    repl.h,
+                                    repl.s,
+                                    repl.v,
+                                    &theme,
+                                );
                             } else {
-                                let [r, g, b, a] = Hsva::new(repl.h, repl.s, repl.v, repl.a).to_srgba_unmultiplied();
+                                let [r, g, b, a] = Hsva::new(repl.h, repl.s, repl.v, repl.a)
+                                    .to_srgba_unmultiplied();
                                 let hex = format!("#{:02X}{:02X}{:02X}{:02X}", r, g, b, a);
-                                modify_element(&mut root, &changed_color.to_lowercase().replace(" ", "-"), &hex);
+                                modify_element(
+                                    &mut root,
+                                    &changed_color.to_lowercase().replace(" ", "-"),
+                                    &hex,
+                                );
                             }
                         }
                     }

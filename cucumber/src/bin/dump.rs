@@ -1,6 +1,13 @@
-use std::{env, fs::{self, File}, io::BufWriter};
+use std::{
+    env,
+    fs::{self, File},
+    io::BufWriter,
+};
 
-use cucumber::{extract_general_goodies, types::{AbsoluteColor, ColorConst, CucumberBitwigTheme, NamedColor, UiTarget}};
+use cucumber::{
+    extract_general_goodies,
+    types::{AbsoluteColor, ColorConst, CucumberBitwigTheme, NamedColor, UiTarget},
+};
 use krakatau2::zip;
 
 fn main() -> anyhow::Result<()> {
@@ -18,32 +25,47 @@ fn main() -> anyhow::Result<()> {
         ..Default::default()
     };
 
-    let known_colors = general_goodies.named_colors.iter().map(|color| {
-        (color.color_name.clone(), color.components.clone())
-    }).collect();
+    let known_colors = general_goodies
+        .named_colors
+        .iter()
+        .map(|color| (color.color_name.clone(), color.components.clone()))
+        .collect();
 
     for color in general_goodies.named_colors {
         let (h, s, v) = color.components.to_hsv(&known_colors);
         let a = color.components.alpha().unwrap_or(255);
-        let named_color = NamedColor::Absolute(
-            AbsoluteColor {
-                h, s, v, a: a as f32 / 255.0, compositing_mode: color.compositing_mode
-            }
-        );
-        theme.named_colors.insert(color.color_name.clone(), named_color);
+        let named_color = NamedColor::Absolute(AbsoluteColor {
+            h,
+            s,
+            v,
+            a: a as f32 / 255.0,
+            compositing_mode: color.compositing_mode,
+        });
+        theme
+            .named_colors
+            .insert(color.color_name.clone(), named_color);
     }
 
     if let Some(timeline_color_ref) = general_goodies.timeline_color_ref {
         let timeline_const_name = timeline_color_ref.const_name;
-        let timeline_const = general_goodies.raw_colors.constants.consts.iter().find(|cnst| {
-            cnst.const_name == timeline_const_name
-        }).unwrap();
+        let timeline_const = general_goodies
+            .raw_colors
+            .constants
+            .consts
+            .iter()
+            .find(|cnst| cnst.const_name == timeline_const_name)
+            .unwrap();
         if let Some((r, g, b)) = timeline_const.color_comps.to_rgb(&known_colors) {
             let a = timeline_const.color_comps.alpha().unwrap_or(255);
             let timeline_color_const = ColorConst::from_comps(r, g, b, a);
-            theme.constant_refs.insert(UiTarget::Playhead, timeline_color_const);
+            theme
+                .constant_refs
+                .insert(UiTarget::Playhead, timeline_color_const);
         } else {
-            println!("FOUND HSV COLOR, NOT ADDING TO THEME: {:?}", timeline_const.color_comps);
+            println!(
+                "FOUND HSV COLOR, NOT ADDING TO THEME: {:?}",
+                timeline_const.color_comps
+            );
         };
     }
 

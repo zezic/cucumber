@@ -13,7 +13,6 @@ struct Args {
     jar_out: Option<String>,
 }
 
-
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
@@ -22,7 +21,9 @@ fn main() -> eframe::Result {
     let args = Args::parse();
 
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1200.0, 720.0]).with_position([400.0, 150.0]),
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([1200.0, 720.0])
+            .with_position([400.0, 150.0]),
         ..Default::default()
     };
     eframe::run_native(

@@ -73,8 +73,17 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(AuthenticatedClient::Id).integer().not_null().auto_increment().primary_key())
                     .col(ColumnDef::new(AuthenticatedClient::UserId).integer().not_null())
                     .col(ColumnDef::new(AuthenticatedClient::Token).uuid().not_null())
-                    .col(ColumnDef::new(AuthenticatedClient::CreatedAt).timestamp().not_null().default(Expr::current_timestamp()))
-                    .foreign_key(ForeignKey::create().from(AuthenticatedClient::Table, AuthenticatedClient::UserId).to(User::Table, User::Id))
+                    .col(
+                        ColumnDef::new(AuthenticatedClient::CreatedAt)
+                            .timestamp()
+                            .not_null()
+                            .default(Expr::current_timestamp()),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .from(AuthenticatedClient::Table, AuthenticatedClient::UserId)
+                            .to(User::Table, User::Id),
+                    )
                     .to_owned(),
             )
             .await?;
@@ -86,9 +95,7 @@ impl MigrationTrait for Migration {
         manager.drop_table(Table::drop().table(AuthenticatedClient::Table).to_owned()).await?;
         manager.drop_table(Table::drop().table(ExternalUser::Table).to_owned()).await?;
         manager.drop_table(Table::drop().table(User::Table).to_owned()).await?;
-        manager
-            .drop_type(Type::drop().name(AuthProvider::name()).to_owned())
-            .await?;
+        manager.drop_type(Type::drop().name(AuthProvider::name()).to_owned()).await?;
 
         Ok(())
     }

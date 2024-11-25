@@ -1,10 +1,26 @@
-use std::{env, fs::{self, File}, io::BufWriter, path::Path};
 use std::io::Read;
+use std::{
+    env,
+    fs::{self, File},
+    io::BufWriter,
+    path::Path,
+};
 
 use anyhow::anyhow;
 
-use cucumber::{extract_general_goodies, types::{AbsoluteColor, ColorConst, CucumberBitwigTheme, NamedColor, UiTarget}};
-use krakatau2::{file_output_util::Writer, lib::{assemble, classfile::{self, code::Instr, parse::Class}, AssemblerOptions, DisassemblerOptions, ParserOptions}, zip};
+use cucumber::{
+    extract_general_goodies,
+    types::{AbsoluteColor, ColorConst, CucumberBitwigTheme, NamedColor, UiTarget},
+};
+use krakatau2::{
+    file_output_util::Writer,
+    lib::{
+        assemble,
+        classfile::{self, code::Instr, parse::Class},
+        AssemblerOptions, DisassemblerOptions, ParserOptions,
+    },
+    zip,
+};
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = env::args().collect();
@@ -55,8 +71,12 @@ fn main() -> anyhow::Result<()> {
 
 pub fn patch_class(class: &mut Class<'_>) {
     for method in &mut class.methods {
-        let Some(attr) = method.attrs.first_mut() else { continue; };
-        let classfile::attrs::AttrBody::Code((code_1, _code_2)) = &mut attr.body else { continue; };
+        let Some(attr) = method.attrs.first_mut() else {
+            continue;
+        };
+        let classfile::attrs::AttrBody::Code((code_1, _code_2)) = &mut attr.body else {
+            continue;
+        };
         let bytecode = &mut code_1.bytecode;
         let mut new_bytecode = vec![];
         for (pos, ix) in bytecode.0.drain(..) {

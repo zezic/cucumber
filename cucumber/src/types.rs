@@ -30,10 +30,10 @@ pub enum CompositingMode {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Relative {
     base: RelativeColorBase,
-    delta_hue: f32, // -360..360
+    delta_hue: f32,        // -360..360
     delta_saturation: f32, // -100..100
-    delta_value: f32, // -100..100
-    delta_alpha: f32, // -1..1
+    delta_value: f32,      // -100..100
+    delta_alpha: f32,      // -1..1
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -98,7 +98,10 @@ pub struct CucumberBitwigTheme {
 }
 
 impl CucumberBitwigTheme {
-    pub fn from_jar< R: std::io::Read + std::io::Seek >(zip: &mut ZipArchive<R>, report_progress: impl FnMut(ThemeLoadingEvent)) -> Self {
+    pub fn from_jar<R: std::io::Read + std::io::Seek>(
+        zip: &mut ZipArchive<R>,
+        report_progress: impl FnMut(ThemeLoadingEvent),
+    ) -> Self {
         let general_goodies = extract_general_goodies(zip, report_progress).unwrap();
 
         let mut theme = CucumberBitwigTheme {
@@ -106,31 +109,42 @@ impl CucumberBitwigTheme {
             ..Default::default()
         };
 
-        let known_colors = general_goodies.named_colors.iter().map(|color| {
-            (color.color_name.clone(), color.components.clone())
-        }).collect();
+        let known_colors = general_goodies
+            .named_colors
+            .iter()
+            .map(|color| (color.color_name.clone(), color.components.clone()))
+            .collect();
 
         for color in general_goodies.named_colors {
             let (h, s, v) = color.components.to_hsv(&known_colors);
             let a = color.components.alpha().unwrap_or(255);
-            let named_color = NamedColor::Absolute(
-                AbsoluteColor {
-                    h, s, v, a: a as f32 / 255.0,
-                    compositing_mode: color.compositing_mode
-                }
-            );
-            theme.named_colors.insert(color.color_name.clone(), named_color);
+            let named_color = NamedColor::Absolute(AbsoluteColor {
+                h,
+                s,
+                v,
+                a: a as f32 / 255.0,
+                compositing_mode: color.compositing_mode,
+            });
+            theme
+                .named_colors
+                .insert(color.color_name.clone(), named_color);
         }
 
         if let Some(timeline_color_ref) = general_goodies.timeline_color_ref {
             let timeline_const_name = timeline_color_ref.const_name;
-            let timeline_const = general_goodies.raw_colors.constants.consts.iter().find(|cnst| {
-                cnst.const_name == timeline_const_name
-            }).unwrap();
+            let timeline_const = general_goodies
+                .raw_colors
+                .constants
+                .consts
+                .iter()
+                .find(|cnst| cnst.const_name == timeline_const_name)
+                .unwrap();
             if let Some((r, g, b)) = timeline_const.color_comps.to_rgb(&known_colors) {
                 let a = timeline_const.color_comps.alpha().unwrap_or(255);
                 let timeline_color_const = ColorConst::from_comps(r, g, b, a);
-                theme.constant_refs.insert(UiTarget::Playhead, timeline_color_const);
+                theme
+                    .constant_refs
+                    .insert(UiTarget::Playhead, timeline_color_const);
             }
         }
 
