@@ -23,6 +23,7 @@ pub struct AbsoluteColor {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum CompositingMode {
     Absolute,
+    RelativeToBackground,
     BlendedOnBackground,
 }
 

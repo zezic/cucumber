@@ -139,7 +139,8 @@ fn main() -> anyhow::Result<()> {
             .raw_colors
             .constants
             .consts
-            .choose(&mut rng).unwrap();
+            .choose(&mut rng)
+            .unwrap();
         switch_timeline_color(&mut class, &other_color.const_name, timeline_color_ref);
         let new_buffer = reasm(&file_name_w_ext, &class)?;
         patched_classes.insert(file_name_w_ext, new_buffer);
@@ -189,7 +190,11 @@ fn reasm(fname: &str, class: &Class<'_>) -> anyhow::Result<Vec<u8>> {
     Ok(data)
 }
 
-fn find_method_by_sig(class: &Class<'_>, sig_start: &str, method_name: &str) -> Option<(u16, MethodDescription)> {
+fn find_method_by_sig(
+    class: &Class<'_>,
+    sig_start: &str,
+    method_name: &str,
+) -> Option<(u16, MethodDescription)> {
     let rp = init_refprinter(&class.cp, &class.attrs);
 
     let method = class.methods.iter().skip(1).next();
@@ -222,9 +227,13 @@ fn switch_timeline_color<'a>(
     class.cp.0.push(Const::Utf8(BStr(new_const.as_bytes())));
 
     let nat_idx = class.cp.0.len();
-    class.cp.0.push(Const::NameAndType(utf_data_idx as u16, timeline_color_ref.field_type_cp_idx));
+    class.cp.0.push(Const::NameAndType(
+        utf_data_idx as u16,
+        timeline_color_ref.field_type_cp_idx,
+    ));
 
-    let Const::Field(_, old_nat_idx) = class.cp.0.get_mut(timeline_color_ref.fmim_idx as usize)? else {
+    let Const::Field(_, old_nat_idx) = class.cp.0.get_mut(timeline_color_ref.fmim_idx as usize)?
+    else {
         panic!()
     };
     *old_nat_idx = nat_idx as u16;
@@ -241,60 +250,68 @@ fn replace_named_color<'a>(
     palette_color_meths: &'a PaletteColorMethods,
     compositing_mode: Option<CompositingMode>,
 ) -> Option<()> {
-    if !matches!(new_value, ColorComponents::Rgbai(..)) {
-        todo!("Only Rgbai supported for the moment");
+    if !matches!(new_value, ColorComponents::Rgbai(..) | ColorComponents::Hsvf(..)) {
+        todo!("Only Rgbai and Hsvf supported for the moment");
     }
     let named_color = named_colors
         .iter_mut()
         .find(|color| color.color_name == name)?;
 
     let method_descr_to_find = match compositing_mode {
-        Some(CompositingMode::BlendedOnBackground) => &palette_color_meths.rgba_i_blended_on_background,
+        Some(CompositingMode::BlendedOnBackground) => {
+            &palette_color_meths.rgba_i_blended_on_background
+        }
+        Some(CompositingMode::RelativeToBackground) => {
+            &palette_color_meths.hsv_f_relative_to_background
+        }
         _ => &palette_color_meths.rgba_i_absolute,
     };
 
-    let (rgbai_method_id, _rgbai_method_desc) =
-        match find_method_by_sig(class, &method_descr_to_find.signature, &method_descr_to_find.method) {
-            Some(met) => met,
-            None => {
-                let rgbai_method_desc = &palette_color_meths.rgba_i_absolute;
+    let (rgbai_method_id, _rgbai_method_desc) = match find_method_by_sig(
+        class,
+        &method_descr_to_find.signature,
+        &method_descr_to_find.method,
+    ) {
+        Some(met) => met,
+        None => {
+            let rgbai_method_desc = &palette_color_meths.rgba_i_absolute;
 
-                let class_utf_id = class.cp.0.len();
-                class
-                    .cp
-                    .0
-                    .push(Const::Utf8(BStr(rgbai_method_desc.class.as_bytes())));
+            let class_utf_id = class.cp.0.len();
+            class
+                .cp
+                .0
+                .push(Const::Utf8(BStr(rgbai_method_desc.class.as_bytes())));
 
-                let method_utf_id = class.cp.0.len();
-                class
-                    .cp
-                    .0
-                    .push(Const::Utf8(BStr(rgbai_method_desc.method.as_bytes())));
+            let method_utf_id = class.cp.0.len();
+            class
+                .cp
+                .0
+                .push(Const::Utf8(BStr(rgbai_method_desc.method.as_bytes())));
 
-                let sig_utf_id = class.cp.0.len();
-                class
-                    .cp
-                    .0
-                    .push(Const::Utf8(BStr(rgbai_method_desc.signature.as_bytes())));
+            let sig_utf_id = class.cp.0.len();
+            class
+                .cp
+                .0
+                .push(Const::Utf8(BStr(rgbai_method_desc.signature.as_bytes())));
 
-                let class_id = class.cp.0.len();
-                class.cp.0.push(Const::Class(class_utf_id as u16));
+            let class_id = class.cp.0.len();
+            class.cp.0.push(Const::Class(class_utf_id as u16));
 
-                let name_and_type_id = class.cp.0.len();
-                class
-                    .cp
-                    .0
-                    .push(Const::NameAndType(method_utf_id as u16, sig_utf_id as u16));
+            let name_and_type_id = class.cp.0.len();
+            class
+                .cp
+                .0
+                .push(Const::NameAndType(method_utf_id as u16, sig_utf_id as u16));
 
-                let method_id = class.cp.0.len();
-                class
-                    .cp
-                    .0
-                    .push(Const::Method(class_id as u16, name_and_type_id as u16));
+            let method_id = class.cp.0.len();
+            class
+                .cp
+                .0
+                .push(Const::Method(class_id as u16, name_and_type_id as u16));
 
-                (method_id as u16, rgbai_method_desc.clone())
-            }
-        };
+            (method_id as u16, rgbai_method_desc.clone())
+        }
+    };
 
     let rp = init_refprinter(&class.cp, &class.attrs);
 
@@ -336,9 +353,14 @@ fn replace_named_color<'a>(
                         }
                     }
                 }
-                let ixs_to_push = new_value.to_ixs();
+                let (ixs_to_push, floats_to_add) = new_value.to_ixs(class.cp.0.len());
                 for ix in ixs_to_push {
                     new_bytecode.push((Pos(pos_gen.next()?), ix));
+                }
+                if let Some(floats) = floats_to_add {
+                    for float in floats {
+                        class.cp.0.push(Const::Float(u32::from_be_bytes(float.float.to_be_bytes())));
+                    }
                 }
 
                 // Now invoke correct method instead of old
@@ -568,27 +590,31 @@ impl IxToInt for Instr {
 
 impl IxToFloat for Instr {
     fn to_float(&self, refprinter: &RefPrinter) -> f32 {
-        match self {
-            Instr::Fconst0 => 0.0,
-            Instr::Fconst1 => 1.0,
-            Instr::Fconst2 => 2.0,
-            Instr::Dconst0 => 0.0,
-            Instr::Dconst1 => 1.0,
+        let id = match self {
+            Instr::Fconst0 => return 0.0,
+            Instr::Fconst1 => return 1.0,
+            Instr::Fconst2 => return 2.0,
+            Instr::Dconst0 => return 0.0,
+            Instr::Dconst1 => return 1.0,
             Instr::Ldc(ind) => {
-                let data = refprinter.cpool.get(*ind as usize).unwrap();
-                match &data.data {
-                    ConstData::Prim(_prim_tag, text) => {
-                        match text.trim_end_matches("f").parse::<f32>() {
-                            Ok(val) => val,
-                            Err(err) => {
-                                panic!("err parse f32 [{}]: {}", text, err);
-                            }
-                        }
-                    }
-                    _ => unimplemented!(),
-                }
+                *ind as u16
+            }
+            Instr::LdcW(ind) => {
+                *ind
             }
             x => unimplemented!("instr: {:?}", x),
+        };
+        let data = refprinter.cpool.get(id as usize).unwrap();
+        match &data.data {
+            ConstData::Prim(_prim_tag, text) => {
+                match text.trim_end_matches("f").parse::<f32>() {
+                    Ok(val) => val,
+                    Err(err) => {
+                        panic!("err parse f32 [{}]: {}", text, err);
+                    }
+                }
+            }
+            _ => unimplemented!(),
         }
     }
 }
@@ -694,6 +720,12 @@ pub enum ColorComponents {
     StringAndAdjust(String, f32, f32, f32),
 }
 
+#[derive(Debug)]
+struct FloatToAddToConstantPool {
+    index: usize,
+    float: f32,
+}
+
 impl ColorComponents {
     pub fn alpha(&self) -> Option<u8> {
         Some(match self {
@@ -708,7 +740,7 @@ impl ColorComponents {
         })
     }
 
-    fn to_ixs(&self) -> Vec<Instr> {
+    fn to_ixs(&self, next_free_cpool_idx: usize) -> (Vec<Instr>, Option<Vec<FloatToAddToConstantPool>>) {
         match self {
             ColorComponents::Rgbai(r, g, b, a) => {
                 let mut ixs = vec![];
@@ -719,8 +751,25 @@ impl ColorComponents {
                         ixs.push(Instr::Bipush(*comp as i8));
                     }
                 }
-                ixs
-            }
+                (ixs, None)
+            },
+            ColorComponents::Hsvf(h, s, v) => {
+                let mut ixs = vec![];
+                let mut floats = vec![];
+                for (idx, comp) in [h, s, v].into_iter().enumerate() {
+                    let index = next_free_cpool_idx + idx;
+                    if index > 255 {
+                        ixs.push(Instr::LdcW(index as u16));
+                    } else {
+                        ixs.push(Instr::Ldc(index as u8));
+                    }
+                    floats.push(FloatToAddToConstantPool {
+                        index,
+                        float: *comp
+                    });
+                }
+                (ixs, Some(floats))
+            },
             _ => todo!(),
         }
     }
@@ -734,7 +783,11 @@ impl ColorComponents {
                 // TODO: convert HSV to RGB!
                 let color = colorsys::Hsl::new(*h as f64, *s as f64, *v as f64, None);
                 let color = colorsys::Rgb::from(color);
-                ((color.red() * 255.0) as u8, (color.green() * 255.0) as u8, (color.blue() * 255.0) as u8)
+                (
+                    (color.red() * 255.0) as u8,
+                    (color.green() * 255.0) as u8,
+                    (color.blue() * 255.0) as u8,
+                )
             }
             ColorComponents::RefAndAdjust(_, _, _, _) => todo!(),
             ColorComponents::StringAndAdjust(ref_name, h, s, v) => {
@@ -759,11 +812,7 @@ impl ColorComponents {
 
     pub fn to_hsv(&self, known_colors: &HashMap<String, ColorComponents>) -> (f32, f32, f32) {
         let (r, g, b) = self.to_rgb(known_colors);
-        let hsva = Hsva::from_srgb([
-            r,
-            g,
-            b,
-        ]);
+        let hsva = Hsva::from_srgb([r, g, b]);
         (hsva.h, hsva.s, hsva.v)
     }
 }
@@ -968,7 +1017,9 @@ fn detect_timeline_color_const(class: &Class) -> Option<(u16, u16, String)> {
     let Instr::Getstatic(fmim_idx) = &bytecode.0.get(get_static_ix_idx)?.1 else {
         return None;
     };
-    let ConstData::Fmim(FmimTag::Field, _class_cp_idx, fld_id) = &rp.cpool.get(*fmim_idx as usize)?.data else {
+    let ConstData::Fmim(FmimTag::Field, _class_cp_idx, fld_id) =
+        &rp.cpool.get(*fmim_idx as usize)?.data
+    else {
         return None;
     };
     let ConstData::Nat(field_cp_idx, field_type_cp_idx) = &rp.cpool.get(*fld_id as usize)?.data
@@ -1012,6 +1063,9 @@ fn scan_for_named_color_defs(
             let Some(method_descr) = find_method_description(&rp, *method_id, None) else {
                 continue;
             };
+            if filename.contains("dcd") {
+                println!("### METHOD_DESCR: {:?}", method_descr);
+            }
 
             for (known_meth, compositing_mode) in &all_meths {
                 if method_descr == **known_meth {
@@ -1021,27 +1075,33 @@ fn scan_for_named_color_defs(
                             println!("{}: offset out of bounds", filename);
                             continue;
                         };
-                        match ix {
-                            Instr::Ldc(id) => {
-                                let text = find_utf_ldc(&rp, *id as u16);
-                                let components =
-                                    sig_kind.extract_color_components(idx, bytecode, &rp);
-
-                                // If not in-place color name defined, then it's a method call inside other delegate method
-                                // so it's not interesting to us (I guess?).
-                                if let Some(color_name) = &text {
-                                    found.push(NamedColor {
-                                        class_name: class_name.clone(),
-                                        method_idx,
-                                        color_name: color_name.clone(),
-                                        components: components.clone(),
-                                        compositing_mode: compositing_mode.clone(),
-                                    });
-                                    known_colors.insert(color_name.clone(), components);
-                                }
+                        let ldc_id = match ix {
+                            Instr::Ldc(id) => { Some(*id as u16) },
+                            Instr::LdcW(id) => Some(*id),
+                            _other => None,
+                        };
+                        if let Some(id) = ldc_id {
+                            if filename.contains("dcd") {
+                                println!("### LDC ID IS: {:?}", id);
                             }
-                            _other => {
-                                // println!("{}: {:?}", filename, other);
+                            let text = find_utf_ldc(&rp, id);
+                            let components =
+                                sig_kind.extract_color_components(idx, bytecode, &rp);
+
+                            // If not in-place color name defined, then it's a method call inside other delegate method
+                            // so it's not interesting to us (I guess?).
+                            if let Some(color_name) = &text {
+                                println!("### FOUND COLOR: {}", color_name);
+                                found.push(NamedColor {
+                                    class_name: class_name.clone(),
+                                    method_idx,
+                                    color_name: color_name.clone(),
+                                    components: components.clone(),
+                                    compositing_mode: compositing_mode.clone(),
+                                });
+                                known_colors.insert(color_name.clone(), components);
+                            } else {
+                                println!("### NOT FOUND COLOR ##################################################");
                             }
                         }
                     } else {
@@ -1068,7 +1128,9 @@ fn debug_print_color(
     let comp_line = format!("{} {} {} {}", r, g, b, a);
 
     let debug_line = if (r as u16 + g as u16 + b as u16) > 384 {
-        format!("{} {}", comp_line, color_name).black().on_truecolor(r, g, b)
+        format!("{} {}", comp_line, color_name)
+            .black()
+            .on_truecolor(r, g, b)
     } else {
         format!("{} {}", comp_line, color_name).on_truecolor(r, g, b)
     };
@@ -1080,11 +1142,11 @@ enum UsefulFileType {
     MainPalette,
     RawColor,
     Init,
-    TimelineColorCnst { 
-        
-            field_type_cp_idx: u16,
-            fmim_idx: u16,
-        cnst_name: String },
+    TimelineColorCnst {
+        field_type_cp_idx: u16,
+        fmim_idx: u16,
+        cnst_name: String,
+    },
 }
 
 fn is_useful_file(class: &Class) -> Option<UsefulFileType> {
@@ -1155,7 +1217,19 @@ pub struct PaletteColorMethods {
     pub rgb_i: MethodDescription,
     pub rgba_i_absolute: MethodDescription,
     pub rgba_i_blended_on_background: MethodDescription,
-    pub rgb_f: MethodDescription,
+    // H - 0..360 or -360, s 0..1, v -1..+1
+    // By default used only for:
+    // Light button stroke - ???
+    // Selected borderless button background - used but where ???
+    // Pressed borderless button background - not used
+    // Rubber Button Emboss Highlight - not used
+    // Icon Frame - used, but where?
+    // Slider background - used, but where?
+    // Knob Body - used very much
+    // Knob Value Background
+    // Knob Value Background (dark)
+    //
+    pub hsv_f_relative_to_background: MethodDescription,
     pub ref_hsv_f: MethodDescription,
     pub name_hsv_f: MethodDescription,
 }
@@ -1166,8 +1240,14 @@ impl PaletteColorMethods {
             (&self.grayscale_i, None),
             (&self.rgb_i, None),
             (&self.rgba_i_absolute, Some(CompositingMode::Absolute)),
-            (&self.rgba_i_blended_on_background, Some(CompositingMode::BlendedOnBackground)),
-            (&self.rgb_f, None),
+            (
+                &self.rgba_i_blended_on_background,
+                Some(CompositingMode::BlendedOnBackground),
+            ),
+            (
+                &self.hsv_f_relative_to_background,
+                Some(CompositingMode::RelativeToBackground),
+            ),
             (&self.ref_hsv_f, None),
             (&self.name_hsv_f, None),
         ]
@@ -1178,7 +1258,7 @@ impl PaletteColorMethods {
             ColorComponents::Grayscale(_) => &self.grayscale_i,
             ColorComponents::Rgbi(_, _, _) => &self.rgb_i,
             ColorComponents::Rgbai(_, _, _, _) => &self.rgba_i_absolute,
-            ColorComponents::Hsvf(_, _, _) => &self.rgb_f,
+            ColorComponents::Hsvf(_, _, _) => &self.hsv_f_relative_to_background,
             ColorComponents::Rgbaf(_, _, _, _) => unreachable!(),
             ColorComponents::Rgbad(_, _, _, _) => unreachable!(),
             ColorComponents::RefAndAdjust(_, _, _, _) => &self.ref_hsv_f,
@@ -1334,14 +1414,17 @@ fn extract_palette_color_methods(class: &Class) -> Option<PaletteColorMethods> {
 
     let find_method = |signature_start: &str, color_rec_name: Option<&str>, skip: Option<usize>| {
         let invokes = invokes.clone();
-        invokes.filter_map(|method_id| {
-            let method_descr = find_method_description(&rp, *method_id, color_rec_name)?;
-            if method_descr.signature.starts_with(signature_start) {
-                Some(method_descr)
-            } else {
-                None
-            }
-        }).skip(skip.unwrap_or_default()).next()
+        invokes
+            .filter_map(|method_id| {
+                let method_descr = find_method_description(&rp, *method_id, color_rec_name)?;
+                if method_descr.signature.starts_with(signature_start) {
+                    Some(method_descr)
+                } else {
+                    None
+                }
+            })
+            .skip(skip.unwrap_or_default())
+            .next()
     };
 
     let grayscale_i = find_method("(Ljava/lang/String;I)", None, None)?;
@@ -1350,11 +1433,27 @@ fn extract_palette_color_methods(class: &Class) -> Option<PaletteColorMethods> {
         .split_once("I)L")
         .map(|(_, suffix)| suffix.strip_suffix(";"))
         .flatten()?;
-    let rgb_i = find_method("(Ljava/lang/String;III)", Some(color_record_class_name), None)?;
-    let rgba_i_absolute = find_method("(Ljava/lang/String;IIII)", Some(color_record_class_name), None)?;
+    let rgb_i = find_method(
+        "(Ljava/lang/String;III)",
+        Some(color_record_class_name),
+        None,
+    )?;
+    let rgba_i_absolute = find_method(
+        "(Ljava/lang/String;IIII)",
+        Some(color_record_class_name),
+        None,
+    )?;
     // TODO: search this method not by position, but by difference against rgba_i_absolute
-    let rgba_i_blended_on_background = find_method("(Ljava/lang/String;IIII)", Some(color_record_class_name), Some(1))?;
-    let rgb_f = find_method("(Ljava/lang/String;FFF)", Some(color_record_class_name), None)?;
+    let rgba_i_blended_on_background = find_method(
+        "(Ljava/lang/String;IIII)",
+        Some(color_record_class_name),
+        Some(1),
+    )?;
+    let hsv_f_relative_to_background = find_method(
+        "(Ljava/lang/String;FFF)",
+        Some(color_record_class_name),
+        None,
+    )?;
     let ref_hsv_f = find_method(
         &format!("(Ljava/lang/String;L{};FFF)", color_record_class_name),
         Some(color_record_class_name),
@@ -1371,7 +1470,7 @@ fn extract_palette_color_methods(class: &Class) -> Option<PaletteColorMethods> {
         rgb_i,
         rgba_i_absolute,
         rgba_i_blended_on_background,
-        rgb_f,
+        hsv_f_relative_to_background,
         ref_hsv_f,
         name_hsv_f,
     })
