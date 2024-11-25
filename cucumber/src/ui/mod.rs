@@ -1,22 +1,24 @@
 use std::{
-    collections::{HashMap, VecDeque}, fs::File, io::{BufReader, Read}, path::Path, str::FromStr, sync::{Arc, RwLock}
+    borrow::Cow, collections::{HashMap, HashSet, VecDeque}, fs::File, io::{BufReader, Read}, path::Path, str::FromStr, sync::{Arc, RwLock}
 };
 
 use anyhow::anyhow;
 use eframe::{
     egui::{
-        color_picker::color_picker_hsva_2d, ecolor::HexColor, Color32, Context, Frame, Layout, Rect, Response, ScrollArea, Sense, Ui
+        self, color_picker::color_picker_hsva_2d, ecolor::HexColor, Color32, Context, Frame, Layout, Rect, Response, ScrollArea, Sense, TextureOptions, Ui, Vec2
     },
     epaint::Hsva,
     App,
 };
-use egui_extras::StripBuilder;
 use egui_file_dialog::FileDialog;
 use krakatau2::{
     file_output_util::Writer,
     lib::{classfile, ParserOptions},
     zip,
 };
+use resvg::usvg::{Color, Fill, NodeKind, TreeParsing};
+use xml::EmitterConfig;
+use xmltree::Element;
 
 use crate::{
     exchange::BerikaiTheme, extract_general_goodies, patching::patch_class, reasm, replace_named_color, types::{AbsoluteColor, CompositingMode, CucumberBitwigTheme, NamedColor, ThemeLoadingEvent}, ColorComponents
@@ -31,6 +33,10 @@ pub struct MyApp {
     filter: String,
     first_run: bool,
     file_dialog: FileDialog,
+    last_mockup_size: Vec2,
+    mockup: Vec<u8>,
+    img_src: egui::ImageSource<'static>,
+    changed_colors: HashSet<String>,
 }
 
 #[derive(Debug)]
@@ -204,6 +210,14 @@ impl MyApp {
                 ctx.request_repaint();
             });
         }
+
+        let mockup = Vec::from(include_bytes!("../../assets/mockup.svg"));
+
+        let img_src: egui::ImageSource = egui::ImageSource::Bytes {
+            uri: Cow::Borrowed("bytes://../../assets/mockup.svg"),
+            bytes: egui::load::Bytes::from(mockup.clone()),
+        };
+
         Ok(Self {
             jar_in,
             jar_out,
@@ -213,6 +227,10 @@ impl MyApp {
             selected_color: None,
             first_run: true,
             file_dialog: FileDialog::new(),
+            last_mockup_size: Vec2::default(),
+            mockup: Vec::from(include_bytes!("../../assets/mockup.svg")),
+            img_src: img_src,
+            changed_colors: HashSet::new(),
         })
     }
 }
@@ -387,6 +405,7 @@ impl App for MyApp {
                                 absolute_color.s = hsva.s;
                                 absolute_color.v = hsva.v;
                                 absolute_color.a = hsva.a;
+                                self.changed_colors.insert(color_name.clone());
                             }
                         });
                     }
@@ -414,6 +433,59 @@ impl App for MyApp {
             if ui.button("hehehe").clicked() {
                 println!("CLICK");
             }
+            let avail_size = ui.available_size();
+            if avail_size != self.last_mockup_size || !self.changed_colors.is_empty() {
+                self.last_mockup_size = avail_size;
+
+                let uri = self.img_src.uri().unwrap();
+                ctx.forget_image(uri);
+
+                // Step 1: Parse the SVG XML
+                let mut root = Element::parse(self.mockup.as_slice()).unwrap();
+                // Step 2: Traverse and modify elements with the target class
+                fn modify_element(element: &mut Element, target_class: &str, new_fill: &str) {
+                    if let Some(class) = element.attributes.get("class") {
+                        if class == target_class {
+                            element.attributes.insert("fill".to_string(), new_fill.to_string());
+                        }
+                    }
+
+                    // Recursively process child elements
+                    for child in element.children.iter_mut() {
+                        if let xmltree::XMLNode::Element(ref mut child_element) = child {
+                            modify_element(child_element, target_class, new_fill);
+                        }
+                    }
+                }
+                if let Some(theme) = self.theme.read().unwrap().as_ref() {
+                    for changed_color in self.changed_colors.drain() {
+                        if let NamedColor::Absolute(color) = theme.named_colors.get(&changed_color).as_ref().unwrap() {
+                            let hsva = Hsva::new(color.h, color.s, color.v, color.a);
+                            let [r, g, b, a] = hsva.to_srgba_unmultiplied();
+                            let hex = format!("{}", HexColor::Hex4(Color32::from_rgba_unmultiplied(r, g, b, a)));
+                            modify_element(&mut root, &changed_color.to_lowercase().replace(" ", "-"), &hex);
+                        }
+                    }
+                }
+                // Step 3: Serialize the modified SVG back to bytes
+                let mut output = Vec::new();
+                let config = EmitterConfig::new().perform_indent(true); // Optional pretty printing
+                root.write_with_config(&mut output, config).unwrap();
+                self.mockup = output;
+
+                self.img_src = egui::ImageSource::Bytes {
+                    uri: Cow::Borrowed("bytes://../../assets/mockup.svg"),
+                    bytes: egui::load::Bytes::from(self.mockup.clone()),
+                };
+            }
+            ui.add_sized(ui.available_size(), egui::Image::new(self.img_src.clone()));
+            // ui.image(include_bytes!("../../assets/mockup.svg"));
+            // ctx.try_load_image(uri, size_hint)
+            // let svg_bytes = include_bytes!("../../assets/mockup.svg");
+            // let image = egui_extras::image::load_svg_bytes_with_size(svg_bytes, Some(egui::SizeHint::Width(ui.available_width() as u32))).map(Arc::new).unwrap();
+            // let texture = ctx.load_texture("mockup.svg", image, TextureOptions::LINEAR);
+            // // load_svg_bytes_with_size();
+            // ui.image();
         });
     }
 }
