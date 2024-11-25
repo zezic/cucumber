@@ -459,10 +459,9 @@ impl App for MyApp {
                 }
                 if let Some(theme) = self.theme.read().unwrap().as_ref() {
                     for changed_color in self.changed_colors.drain() {
-                        if let NamedColor::Absolute(color) = theme.named_colors.get(&changed_color).as_ref().unwrap() {
-                            let hsva = Hsva::new(color.h, color.s, color.v, color.a);
-                            let [r, g, b, a] = hsva.to_srgba_unmultiplied();
-                            let hex = format!("{}", HexColor::Hex4(Color32::from_rgba_unmultiplied(r, g, b, a)));
+                        if let NamedColor::Absolute(repl) = theme.named_colors.get(&changed_color).as_ref().unwrap() {
+                            let [r, g, b, a] = Hsva::new(repl.h, repl.s, repl.v, repl.a).to_srgba_unmultiplied();
+                            let hex = format!("#{:02X}{:02X}{:02X}{:02X}", r, g, b, a);
                             modify_element(&mut root, &changed_color.to_lowercase().replace(" ", "-"), &hex);
                         }
                     }
