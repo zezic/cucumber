@@ -27,7 +27,7 @@ fn main() -> anyhow::Result<()> {
         let a = color.components.alpha().unwrap_or(255);
         let named_color = NamedColor::Absolute(
             AbsoluteColor {
-                h, s, v, a: a as f32 / 255.0
+                h, s, v, a: a as f32 / 255.0, compositing_mode: color.compositing_mode
             }
         );
         theme.named_colors.insert(color.color_name.clone(), named_color);

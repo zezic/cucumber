@@ -21,7 +21,7 @@ use krakatau2::{
     },
     zip::{self, ZipArchive},
 };
-use types::ThemeLoadingEvent;
+use types::{CompositingMode, ThemeLoadingEvent};
 
 pub mod patching;
 pub mod types;
@@ -108,6 +108,7 @@ fn main() -> anyhow::Result<()> {
             ),
             &mut general_goodies.named_colors,
             &general_goodies.palette_color_methods,
+            clr.compositing_mode,
         )
         .is_none()
         {
@@ -187,7 +188,7 @@ fn reasm(fname: &str, class: &Class<'_>) -> anyhow::Result<Vec<u8>> {
     Ok(data)
 }
 
-fn find_method_by_sig(class: &Class<'_>, sig_start: &str) -> Option<(u16, MethodDescription)> {
+fn find_method_by_sig(class: &Class<'_>, sig_start: &str, method_name: &str) -> Option<(u16, MethodDescription)> {
     let rp = init_refprinter(&class.cp, &class.attrs);
 
     let method = class.methods.iter().skip(1).next();
@@ -202,7 +203,7 @@ fn find_method_by_sig(class: &Class<'_>, sig_start: &str) -> Option<(u16, Method
     for (_pos, ix) in &bytecode.0 {
         if let Instr::Invokevirtual(method_id) = &ix {
             let method_descr = find_method_description(&rp, *method_id, None)?;
-            if method_descr.signature.starts_with(sig_start) {
+            if method_descr.signature.starts_with(sig_start) && method_descr.method == method_name {
                 return Some((*method_id, method_descr));
             }
         }
@@ -237,6 +238,7 @@ fn replace_named_color<'a>(
     new_value: ColorComponents,
     named_colors: &mut [NamedColor],
     palette_color_meths: &'a PaletteColorMethods,
+    compositing_mode: Option<CompositingMode>,
 ) -> Option<()> {
     if !matches!(new_value, ColorComponents::Rgbai(..)) {
         todo!("Only Rgbai supported for the moment");
@@ -245,11 +247,16 @@ fn replace_named_color<'a>(
         .iter_mut()
         .find(|color| color.color_name == name)?;
 
+    let method_descr_to_find = match compositing_mode {
+        Some(CompositingMode::BlendedOnBackground) => &palette_color_meths.rgba_i_blended_on_background,
+        _ => &palette_color_meths.rgba_i_absolute,
+    };
+
     let (rgbai_method_id, _rgbai_method_desc) =
-        match find_method_by_sig(class, &palette_color_meths.rgba_i.signature) {
+        match find_method_by_sig(class, &method_descr_to_find.signature, &method_descr_to_find.method) {
             Some(met) => met,
             None => {
-                let rgbai_method_desc = &palette_color_meths.rgba_i;
+                let rgbai_method_desc = &palette_color_meths.rgba_i_absolute;
 
                 let class_utf_id = class.cp.0.len();
                 class
@@ -505,6 +512,7 @@ pub struct NamedColor {
     pub method_idx: usize,
     pub color_name: String,
     pub components: ColorComponents,
+    pub compositing_mode: Option<CompositingMode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1004,9 +1012,9 @@ fn scan_for_named_color_defs(
                 continue;
             };
 
-            for meth in &all_meths {
-                if method_descr == **meth {
-                    if let Some(sig_kind) = &meth.signature_kind {
+            for (known_meth, compositing_mode) in &all_meths {
+                if method_descr == **known_meth {
+                    if let Some(sig_kind) = &known_meth.signature_kind {
                         let offset = sig_kind.color_name_ix_offset();
                         let Some((_, ix)) = bytecode.0.get(idx - offset) else {
                             println!("{}: offset out of bounds", filename);
@@ -1026,6 +1034,7 @@ fn scan_for_named_color_defs(
                                         method_idx,
                                         color_name: color_name.clone(),
                                         components: components.clone(),
+                                        compositing_mode: compositing_mode.clone(),
                                     });
                                     known_colors.insert(color_name.clone(), components);
                                 }
@@ -1143,21 +1152,23 @@ pub struct RawColorConst {
 pub struct PaletteColorMethods {
     pub grayscale_i: MethodDescription,
     pub rgb_i: MethodDescription,
-    pub rgba_i: MethodDescription,
+    pub rgba_i_absolute: MethodDescription,
+    pub rgba_i_blended_on_background: MethodDescription,
     pub rgb_f: MethodDescription,
     pub ref_hsv_f: MethodDescription,
     pub name_hsv_f: MethodDescription,
 }
 
 impl PaletteColorMethods {
-    fn all(&self) -> Vec<&MethodDescription> {
+    fn all(&self) -> Vec<(&MethodDescription, Option<CompositingMode>)> {
         vec![
-            &self.grayscale_i,
-            &self.rgb_i,
-            &self.rgba_i,
-            &self.rgb_f,
-            &self.ref_hsv_f,
-            &self.name_hsv_f,
+            (&self.grayscale_i, None),
+            (&self.rgb_i, None),
+            (&self.rgba_i_absolute, Some(CompositingMode::Absolute)),
+            (&self.rgba_i_blended_on_background, Some(CompositingMode::BlendedOnBackground)),
+            (&self.rgb_f, None),
+            (&self.ref_hsv_f, None),
+            (&self.name_hsv_f, None),
         ]
     }
 
@@ -1165,7 +1176,7 @@ impl PaletteColorMethods {
         match comps {
             ColorComponents::Grayscale(_) => &self.grayscale_i,
             ColorComponents::Rgbi(_, _, _) => &self.rgb_i,
-            ColorComponents::Rgbai(_, _, _, _) => &self.rgba_i,
+            ColorComponents::Rgbai(_, _, _, _) => &self.rgba_i_absolute,
             ColorComponents::Hsvf(_, _, _) => &self.rgb_f,
             ColorComponents::Rgbaf(_, _, _, _) => unreachable!(),
             ColorComponents::Rgbad(_, _, _, _) => unreachable!(),
@@ -1320,40 +1331,45 @@ fn extract_palette_color_methods(class: &Class) -> Option<PaletteColorMethods> {
         _ => None,
     });
 
-    let find_method = |signature_start: &str, color_rec_name: Option<&str>| {
-        let mut invokes = invokes.clone();
-        invokes.find_map(|method_id| {
+    let find_method = |signature_start: &str, color_rec_name: Option<&str>, skip: Option<usize>| {
+        let invokes = invokes.clone();
+        invokes.filter_map(|method_id| {
             let method_descr = find_method_description(&rp, *method_id, color_rec_name)?;
             if method_descr.signature.starts_with(signature_start) {
                 Some(method_descr)
             } else {
                 None
             }
-        })
+        }).skip(skip.unwrap_or_default()).next()
     };
 
-    let grayscale_i = find_method("(Ljava/lang/String;I)", None)?;
+    let grayscale_i = find_method("(Ljava/lang/String;I)", None, None)?;
     let color_record_class_name = grayscale_i
         .signature
         .split_once("I)L")
         .map(|(_, suffix)| suffix.strip_suffix(";"))
         .flatten()?;
-    let rgb_i = find_method("(Ljava/lang/String;III)", Some(color_record_class_name))?;
-    let rgba_i = find_method("(Ljava/lang/String;IIII)", Some(color_record_class_name))?;
-    let rgb_f = find_method("(Ljava/lang/String;FFF)", Some(color_record_class_name))?;
+    let rgb_i = find_method("(Ljava/lang/String;III)", Some(color_record_class_name), None)?;
+    let rgba_i_absolute = find_method("(Ljava/lang/String;IIII)", Some(color_record_class_name), None)?;
+    // TODO: search this method not by position, but by difference against rgba_i_absolute
+    let rgba_i_blended_on_background = find_method("(Ljava/lang/String;IIII)", Some(color_record_class_name), Some(1))?;
+    let rgb_f = find_method("(Ljava/lang/String;FFF)", Some(color_record_class_name), None)?;
     let ref_hsv_f = find_method(
         &format!("(Ljava/lang/String;L{};FFF)", color_record_class_name),
         Some(color_record_class_name),
+        None,
     )?;
     let name_hsv_f = find_method(
         "(Ljava/lang/String;Ljava/lang/String;FFF)",
         Some(color_record_class_name),
+        None,
     )?;
 
     Some(PaletteColorMethods {
         grayscale_i,
         rgb_i,
-        rgba_i,
+        rgba_i_absolute,
+        rgba_i_blended_on_background,
         rgb_f,
         ref_hsv_f,
         name_hsv_f,

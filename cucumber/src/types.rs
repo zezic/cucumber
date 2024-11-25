@@ -17,6 +17,13 @@ pub struct AbsoluteColor {
     pub s: f32,
     pub v: f32,
     pub a: f32,
+    pub compositing_mode: Option<CompositingMode>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub enum CompositingMode {
+    Absolute,
+    BlendedOnBackground,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -104,11 +111,11 @@ impl CucumberBitwigTheme {
 
         for color in general_goodies.named_colors {
             let (h, s, v) = color.components.to_hsv(&known_colors);
-            println!("{:?} -> {:?}", color, (h, s, v));
             let a = color.components.alpha().unwrap_or(255);
             let named_color = NamedColor::Absolute(
                 AbsoluteColor {
-                    h, s, v, a: a as f32 / 255.0
+                    h, s, v, a: a as f32 / 255.0,
+                    compositing_mode: color.compositing_mode
                 }
             );
             theme.named_colors.insert(color.color_name.clone(), named_color);

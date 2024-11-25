@@ -111,6 +111,7 @@ fn write_theme_to_jar(
                 ColorComponents::Rgbai(r, g, b, a),
                 &mut general_goodies.named_colors,
                 &general_goodies.palette_color_methods,
+                repl.compositing_mode.clone(),
             )
             .is_none()
             {
@@ -294,11 +295,13 @@ impl App for MyApp {
                     if let Some(NamedColor::Absolute(absolute_color)) =
                         theme.as_mut().unwrap().named_colors.get_mut(color_name)
                     {
+                        if let Some(compositing_mode) = &absolute_color.compositing_mode {
+                            ui.label(format!("Compositing: {:?}", compositing_mode));
+                        }
                         let mut hsva = Hsva::new(absolute_color.h, absolute_color.s, absolute_color.v, absolute_color.a);
 
                         ui.spacing_mut().slider_width = 314.0;
                         if egui::color_picker::color_picker_hsva_2d(ui, &mut hsva, egui::color_picker::Alpha::OnlyBlend) {
-                            let color = hsva.to_srgba_unmultiplied();
                             absolute_color.h = hsva.h;
                             absolute_color.s = hsva.s;
                             absolute_color.v = hsva.v;
