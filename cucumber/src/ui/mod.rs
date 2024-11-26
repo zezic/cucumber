@@ -11,7 +11,6 @@ use std::{
 use anyhow::anyhow;
 use eframe::{
     egui::{self, ecolor::HexColor, Context, Frame, Layout, Margin, ScrollArea, Sense, Vec2},
-    emath::TSTransform,
     epaint::Hsva,
     App,
 };
@@ -21,7 +20,7 @@ use krakatau2::{
     lib::{classfile, ParserOptions},
     zip,
 };
-use tracing::{debug, info};
+use tracing::debug;
 use xml::EmitterConfig;
 use xmltree::Element;
 
@@ -47,8 +46,6 @@ pub struct MyApp {
     mockup: Vec<u8>,
     img_src: egui::ImageSource<'static>,
     changed_colors: Arc<RwLock<HashSet<String>>>,
-    transform: TSTransform,
-    drag_value: f32,
 }
 
 #[derive(Debug)]
@@ -263,8 +260,6 @@ impl MyApp {
             mockup: Vec::from(include_bytes!("../../assets/mockup.svg")),
             img_src,
             changed_colors,
-            transform: Default::default(),
-            drag_value: 0.0,
         })
     }
 }
@@ -693,67 +688,14 @@ impl App for MyApp {
                 };
             }
 
-            let (id, rect) = ui.allocate_space(ui.min_size());
-            let response = ui.interact(rect, id, egui::Sense::click_and_drag());
-            if response.contains_pointer() {
-                // info!("Resp {:?}", response);
-                // // Allow dragging the background as well.
-                // if response.dragged() {
-                //     self.transform.translation += response.drag_delta();
-                // }
-                // // Plot-like reset
-                // if response.double_clicked() {
-                //     self.transform = TSTransform::default();
-                // }
-            }
-            // let transform = if ui.rect_contains_pointer(rect) {
-            //     TSTransform::from_translation(ui.min_rect().left_top().to_vec2()) * self.transform
-            // } else {
-            //     self.transform
-            // };
-            // let transform = self.transform;
-            if let Some(pointer) = ui.ctx().input(|i| i.pointer.hover_pos()) {
-                // // Note: doesn't catch zooming / panning if a button in this PanZoom container is hovered.
-                // if response.hovered() {
-                //     let pointer_in_layer = transform.inverse() * pointer;
-                //     let zoom_delta = ui.ctx().input(|i| i.zoom_delta());
-                //     let pan_delta = ui.ctx().input(|i| i.smooth_scroll_delta);
+            ScrollArea::both().show(ui, |ui| {
+                ui.add_sized(
+                    // ui.available_size() * Vec2::new(2.0, 2.0),
+                    ui.available_size(),
+                    egui::Image::new(self.img_src.clone()),
+                );
+            });
 
-                //     // Zoom in on pointer:
-                //     self.transform = self.transform
-                //         * TSTransform::from_translation(pointer_in_layer.to_vec2())
-                //         * TSTransform::from_scaling(zoom_delta)
-                //         * TSTransform::from_translation(-pointer_in_layer.to_vec2());
-
-                //     // Pan:
-                //     self.transform = TSTransform::from_translation(pan_delta) * self.transform;
-                // }
-            }
-
-            let window_layer = ui.layer_id();
-            let id = egui::Area::new(id.with(("subarea", 123)))
-                .default_pos(egui::Pos2::new(0.0, 0.0))
-                .order(egui::Order::Background)
-                .constrain(false)
-                .show(ui.ctx(), |ui| {
-                    // ui.set_clip_rect(transform.inverse() * rect);
-                    egui::Frame::default()
-                        .rounding(egui::Rounding::same(4.0))
-                        .inner_margin(egui::Margin::same(8.0))
-                        .stroke(ui.ctx().style().visuals.window_stroke)
-                        .fill(ui.style().visuals.panel_fill)
-                        .show(ui, |ui| {
-                            ui.add_sized(
-                                rect.size(),
-                                // [ui.available_width(), 200.0],
-                                egui::Image::new(self.img_src.clone()),
-                            );
-                        });
-                })
-                .response
-                .layer_id;
-            // ui.ctx().set_transform_layer(id, transform);
-            ui.ctx().set_sublayer(window_layer, id);
         });
     }
 }
