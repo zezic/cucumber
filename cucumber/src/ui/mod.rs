@@ -694,7 +694,6 @@ impl App for MyApp {
             }
 
             let (id, rect) = ui.allocate_space(ui.min_size());
-            info!("Rect {:?}", rect);
             let response = ui.interact(rect, id, egui::Sense::click_and_drag());
             if response.contains_pointer() {
                 // info!("Resp {:?}", response);
@@ -707,8 +706,12 @@ impl App for MyApp {
                 //     self.transform = TSTransform::default();
                 // }
             }
-            let transform =
-                TSTransform::from_translation(ui.min_rect().left_top().to_vec2()) * self.transform;
+            // let transform = if ui.rect_contains_pointer(rect) {
+            //     TSTransform::from_translation(ui.min_rect().left_top().to_vec2()) * self.transform
+            // } else {
+            //     self.transform
+            // };
+            // let transform = self.transform;
             if let Some(pointer) = ui.ctx().input(|i| i.pointer.hover_pos()) {
                 // // Note: doesn't catch zooming / panning if a button in this PanZoom container is hovered.
                 // if response.hovered() {
@@ -733,7 +736,7 @@ impl App for MyApp {
                 .order(egui::Order::Background)
                 .constrain(false)
                 .show(ui.ctx(), |ui| {
-                    ui.set_clip_rect(transform.inverse() * rect);
+                    // ui.set_clip_rect(transform.inverse() * rect);
                     egui::Frame::default()
                         .rounding(egui::Rounding::same(4.0))
                         .inner_margin(egui::Margin::same(8.0))
@@ -749,7 +752,7 @@ impl App for MyApp {
                 })
                 .response
                 .layer_id;
-            ui.ctx().set_transform_layer(id, transform);
+            // ui.ctx().set_transform_layer(id, transform);
             ui.ctx().set_sublayer(window_layer, id);
         });
     }
