@@ -10,10 +10,8 @@ use std::{
 
 use anyhow::anyhow;
 use eframe::{
-    egui::{
-        self, color_picker::color_picker_hsva_2d, ecolor::HexColor, Color32, Context, Frame,
-        Layout, Rect, Response, ScrollArea, Sense, TextureOptions, Ui, Vec2,
-    },
+    egui::{self, ecolor::HexColor, Context, Frame, Layout, Margin, ScrollArea, Sense, Vec2},
+    emath::TSTransform,
     epaint::Hsva,
     App,
 };
@@ -23,8 +21,7 @@ use krakatau2::{
     lib::{classfile, ParserOptions},
     zip,
 };
-use resvg::usvg::{Color, Fill, NodeKind, TreeParsing};
-use tracing::debug;
+use tracing::{debug, info};
 use xml::EmitterConfig;
 use xmltree::Element;
 
@@ -50,6 +47,8 @@ pub struct MyApp {
     mockup: Vec<u8>,
     img_src: egui::ImageSource<'static>,
     changed_colors: Arc<RwLock<HashSet<String>>>,
+    transform: TSTransform,
+    drag_value: f32,
 }
 
 #[derive(Debug)]
@@ -264,6 +263,8 @@ impl MyApp {
             mockup: Vec::from(include_bytes!("../../assets/mockup.svg")),
             img_src,
             changed_colors,
+            transform: Default::default(),
+            drag_value: 0.0,
         })
     }
 }
@@ -278,6 +279,14 @@ impl App for MyApp {
         }
 
         let frame = Frame::central_panel(&ctx.style());
+
+        if self.selected_color.is_none() {
+            if let Some(theme) = self.theme.read().unwrap().as_ref() {
+                if theme.named_colors.contains_key("On") {
+                    self.selected_color = Some("On".into());
+                }
+            }
+        }
 
         egui::SidePanel::left("Palette")
             .frame(frame.inner_margin(1.0))
@@ -409,107 +418,11 @@ impl App for MyApp {
                 });
             });
 
-        egui::SidePanel::left("Color Picker")
-            .frame(frame.inner_margin(8.0))
-            .min_width(330.0)
-            .resizable(false)
-            .show(ctx, |ui| {
-                if let Some(color_name) = &self.selected_color {
-                    ui.label(color_name);
-                    let mut theme = self.theme.write().unwrap();
-                    if let Some(NamedColor::Absolute(absolute_color)) =
-                        theme.as_mut().unwrap().named_colors.get_mut(color_name)
-                    {
-                        if let Some(compositing_mode) = &absolute_color.compositing_mode {
-                            ui.colored_label(
-                                ui.ctx().style().visuals.weak_text_color(),
-                                format!("Compositing: {:?}", compositing_mode),
-                            );
-                        } else {
-                            ui.colored_label(
-                                ui.ctx().style().visuals.weak_text_color(),
-                                "Compositing: Unspecified",
-                            );
-                        }
-
-                        if let Some(CompositingMode::RelativeToBackground) =
-                            absolute_color.compositing_mode
-                        {
-                            ui.horizontal(|ui| {
-                                if ui
-                                    .add(
-                                        egui::DragValue::new(&mut absolute_color.h)
-                                            .range(-360.0..=360.0)
-                                            .speed(0.1)
-                                            .prefix("ΔH"),
-                                    )
-                                    .changed()
-                                {
-                                    self.changed_colors
-                                        .write()
-                                        .unwrap()
-                                        .insert(color_name.clone());
-                                }
-                                if ui
-                                    .add(
-                                        egui::DragValue::new(&mut absolute_color.s)
-                                            .range(-1.0..=1.0)
-                                            .speed(0.01)
-                                            .prefix("ΔS"),
-                                    )
-                                    .changed()
-                                {
-                                    self.changed_colors
-                                        .write()
-                                        .unwrap()
-                                        .insert(color_name.clone());
-                                }
-                                if ui
-                                    .add(
-                                        egui::DragValue::new(&mut absolute_color.v)
-                                            .range(-1.0..=1.0)
-                                            .speed(0.01)
-                                            .prefix("ΔV"),
-                                    )
-                                    .changed()
-                                {
-                                    self.changed_colors
-                                        .write()
-                                        .unwrap()
-                                        .insert(color_name.clone());
-                                }
-                                ui.add_space(5.0);
-                            });
-                        } else {
-                            let mut hsva = Hsva::new(
-                                absolute_color.h,
-                                absolute_color.s,
-                                absolute_color.v,
-                                absolute_color.a,
-                            );
-
-                            ui.spacing_mut().slider_width = 266.0;
-                            Frame::none().inner_margin(24.0).show(ui, |ui| {
-                                if egui::color_picker::color_picker_hsva_2d(
-                                    ui,
-                                    &mut hsva,
-                                    egui::color_picker::Alpha::OnlyBlend,
-                                ) {
-                                    debug!("### {:?} -> {:?}", absolute_color, hsva);
-                                    absolute_color.h = hsva.h;
-                                    absolute_color.s = hsva.s;
-                                    absolute_color.v = hsva.v;
-                                    absolute_color.a = hsva.a;
-                                    self.changed_colors
-                                        .write()
-                                        .unwrap()
-                                        .insert(color_name.clone());
-                                }
-                            });
-                        }
-                    }
-                }
-            });
+        // egui::SidePanel::left("Color Picker")
+        //     .frame(frame.inner_margin(8.0))
+        //     .min_width(330.0)
+        //     .resizable(false)
+        //     .show(ctx, |_ui| {});
 
         egui::SidePanel::right("Debug")
             .frame(frame)
@@ -528,10 +441,118 @@ impl App for MyApp {
                 });
             });
 
+        egui::TopBottomPanel::bottom("Tray")
+            .frame(Frame::none().fill(ctx.style().visuals.window_fill))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    if let Some(color_name) = &self.selected_color {
+                        Frame::none()
+                            .inner_margin(Margin::symmetric(24.0, 18.0))
+                            .show(ui, |ui| {
+                                ui.vertical(|ui| {
+                                    ui.label(color_name);
+                                    let mut theme = self.theme.write().unwrap();
+                                    if let Some(NamedColor::Absolute(absolute_color)) =
+                                        theme.as_mut().unwrap().named_colors.get_mut(color_name)
+                                    {
+                                        if let Some(compositing_mode) =
+                                            &absolute_color.compositing_mode
+                                        {
+                                            ui.colored_label(
+                                                ui.ctx().style().visuals.weak_text_color(),
+                                                format!("Compositing: {:?}", compositing_mode),
+                                            );
+                                        } else {
+                                            ui.colored_label(
+                                                ui.ctx().style().visuals.weak_text_color(),
+                                                "Compositing: Unspecified",
+                                            );
+                                        }
+
+                                        if let Some(CompositingMode::RelativeToBackground) =
+                                            absolute_color.compositing_mode
+                                        {
+                                            ui.horizontal(|ui| {
+                                                if ui
+                                                    .add(
+                                                        egui::DragValue::new(&mut absolute_color.h)
+                                                            .range(-360.0..=360.0)
+                                                            .speed(0.1)
+                                                            .prefix("ΔH"),
+                                                    )
+                                                    .changed()
+                                                {
+                                                    self.changed_colors
+                                                        .write()
+                                                        .unwrap()
+                                                        .insert(color_name.clone());
+                                                }
+                                                if ui
+                                                    .add(
+                                                        egui::DragValue::new(&mut absolute_color.s)
+                                                            .range(-1.0..=1.0)
+                                                            .speed(0.01)
+                                                            .prefix("ΔS"),
+                                                    )
+                                                    .changed()
+                                                {
+                                                    self.changed_colors
+                                                        .write()
+                                                        .unwrap()
+                                                        .insert(color_name.clone());
+                                                }
+                                                if ui
+                                                    .add(
+                                                        egui::DragValue::new(&mut absolute_color.v)
+                                                            .range(-1.0..=1.0)
+                                                            .speed(0.01)
+                                                            .prefix("ΔV"),
+                                                    )
+                                                    .changed()
+                                                {
+                                                    self.changed_colors
+                                                        .write()
+                                                        .unwrap()
+                                                        .insert(color_name.clone());
+                                                }
+                                                ui.add_space(5.0);
+                                            });
+                                        } else {
+                                            let mut hsva = Hsva::new(
+                                                absolute_color.h,
+                                                absolute_color.s,
+                                                absolute_color.v,
+                                                absolute_color.a,
+                                            );
+
+                                            ui.spacing_mut().slider_width = 266.0;
+                                            ui.add_space(18.0);
+                                            Frame::none().show(ui, |ui| {
+                                                if egui::color_picker::color_picker_hsva_2d(
+                                                    ui,
+                                                    &mut hsva,
+                                                    egui::color_picker::Alpha::OnlyBlend,
+                                                ) {
+                                                    absolute_color.h = hsva.h;
+                                                    absolute_color.s = hsva.s;
+                                                    absolute_color.v = hsva.v;
+                                                    absolute_color.a = hsva.a;
+                                                    self.changed_colors
+                                                        .write()
+                                                        .unwrap()
+                                                        .insert(color_name.clone());
+                                                }
+                                            });
+                                        }
+                                    }
+                                });
+                            });
+                        ui.separator();
+                    }
+                });
+            });
+
         egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
-            if ui.button("hehehe").clicked() {
-                debug!("CLICK");
-            }
             let avail_size = ui.available_size();
             if avail_size != self.last_mockup_size
                 || !self.changed_colors.read().unwrap().is_empty()
@@ -671,14 +692,65 @@ impl App for MyApp {
                     bytes: egui::load::Bytes::from(self.mockup.clone()),
                 };
             }
-            ui.add_sized(ui.available_size(), egui::Image::new(self.img_src.clone()));
-            // ui.image(include_bytes!("../../assets/mockup.svg"));
-            // ctx.try_load_image(uri, size_hint)
-            // let svg_bytes = include_bytes!("../../assets/mockup.svg");
-            // let image = egui_extras::image::load_svg_bytes_with_size(svg_bytes, Some(egui::SizeHint::Width(ui.available_width() as u32))).map(Arc::new).unwrap();
-            // let texture = ctx.load_texture("mockup.svg", image, TextureOptions::LINEAR);
-            // // load_svg_bytes_with_size();
-            // ui.image();
+
+            let (id, rect) = ui.allocate_space(ui.min_size());
+            info!("Rect {:?}", rect);
+            let response = ui.interact(rect, id, egui::Sense::click_and_drag());
+            if response.contains_pointer() {
+                // info!("Resp {:?}", response);
+                // // Allow dragging the background as well.
+                // if response.dragged() {
+                //     self.transform.translation += response.drag_delta();
+                // }
+                // // Plot-like reset
+                // if response.double_clicked() {
+                //     self.transform = TSTransform::default();
+                // }
+            }
+            let transform =
+                TSTransform::from_translation(ui.min_rect().left_top().to_vec2()) * self.transform;
+            if let Some(pointer) = ui.ctx().input(|i| i.pointer.hover_pos()) {
+                // // Note: doesn't catch zooming / panning if a button in this PanZoom container is hovered.
+                // if response.hovered() {
+                //     let pointer_in_layer = transform.inverse() * pointer;
+                //     let zoom_delta = ui.ctx().input(|i| i.zoom_delta());
+                //     let pan_delta = ui.ctx().input(|i| i.smooth_scroll_delta);
+
+                //     // Zoom in on pointer:
+                //     self.transform = self.transform
+                //         * TSTransform::from_translation(pointer_in_layer.to_vec2())
+                //         * TSTransform::from_scaling(zoom_delta)
+                //         * TSTransform::from_translation(-pointer_in_layer.to_vec2());
+
+                //     // Pan:
+                //     self.transform = TSTransform::from_translation(pan_delta) * self.transform;
+                // }
+            }
+
+            let window_layer = ui.layer_id();
+            let id = egui::Area::new(id.with(("subarea", 123)))
+                .default_pos(egui::Pos2::new(0.0, 0.0))
+                .order(egui::Order::Background)
+                .constrain(false)
+                .show(ui.ctx(), |ui| {
+                    ui.set_clip_rect(transform.inverse() * rect);
+                    egui::Frame::default()
+                        .rounding(egui::Rounding::same(4.0))
+                        .inner_margin(egui::Margin::same(8.0))
+                        .stroke(ui.ctx().style().visuals.window_stroke)
+                        .fill(ui.style().visuals.panel_fill)
+                        .show(ui, |ui| {
+                            ui.add_sized(
+                                rect.size(),
+                                // [ui.available_width(), 200.0],
+                                egui::Image::new(self.img_src.clone()),
+                            );
+                        });
+                })
+                .response
+                .layer_id;
+            ui.ctx().set_transform_layer(id, transform);
+            ui.ctx().set_sublayer(window_layer, id);
         });
     }
 }
