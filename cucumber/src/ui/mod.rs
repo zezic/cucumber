@@ -5,7 +5,7 @@ use std::{
     io::{BufReader, Read},
     path::Path,
     str::FromStr,
-    sync::{Arc, RwLock},
+    sync::{mpsc::Receiver, Arc, RwLock},
 };
 
 use anyhow::anyhow;
@@ -247,6 +247,12 @@ impl MyApp {
             bytes: egui::load::Bytes::from(mockup.clone()),
         };
 
+        let file_dialog = FileDialog::new()
+            .add_file_filter(
+                "JSON",
+                Arc::new(|path| path.to_string_lossy().to_lowercase().ends_with("json")),
+            );
+
         Ok(Self {
             jar_in,
             jar_out,
@@ -255,7 +261,7 @@ impl MyApp {
             filter: String::new(),
             selected_color: None,
             first_run: true,
-            file_dialog: FileDialog::new(),
+            file_dialog,
             last_mockup_size: Vec2::default(),
             mockup: Vec::from(include_bytes!("../../assets/mockup.svg")),
             img_src,
@@ -374,6 +380,7 @@ impl App for MyApp {
 
                     ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("Import Berikai JSON").clicked() {
+                            self.file_dialog.config_mut().default_file_filter = Some("JSON".into());
                             self.file_dialog.select_file();
                         }
 
@@ -549,7 +556,9 @@ impl App for MyApp {
 
         egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
             let avail_size = ui.available_size();
-            if avail_size != self.last_mockup_size
+            let size_diff = (avail_size - self.last_mockup_size).abs();
+            if size_diff.x > 200.0
+                || size_diff.y > 200.0
                 || !self.changed_colors.read().unwrap().is_empty()
             {
                 self.last_mockup_size = avail_size;
@@ -690,12 +699,25 @@ impl App for MyApp {
 
             ScrollArea::both().show(ui, |ui| {
                 ui.add_sized(
-                    // ui.available_size() * Vec2::new(2.0, 2.0),
+                    // ui.available_size() * Vec2::new(2.0, 2.0), // zoom example
                     ui.available_size(),
                     egui::Image::new(self.img_src.clone()),
                 );
             });
-
         });
+    }
+}
+
+struct ColorizerTask {
+    changed_colors: HashSet<String>,
+}
+
+fn colorizer_thread(rx: Receiver<ColorizerTask>) {
+    loop {
+        // Wait for tasks to appear
+        let mut task = rx.recv().unwrap();
+        while let Ok(another_task) = rx.try_recv() {
+            task = another_task
+        }
     }
 }
