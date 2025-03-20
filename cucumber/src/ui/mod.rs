@@ -83,6 +83,7 @@ pub enum CommonEvent {
 enum LogRecord {
     ThemeLoading(ThemeLoadingEvent),
     ThemeWriting(ThemeWritingEvent),
+    Text(String),
 }
 
 #[derive(Debug)]
@@ -408,9 +409,15 @@ impl App for MyApp {
                         let theme = self.theme.as_ref().cloned().unwrap();
                         let notifier = self.notifier.clone();
                         std::thread::spawn(move || {
-                            write_theme_to_jar(jar_in, jar_out, theme, |evt| {
+                            let result = write_theme_to_jar(jar_in, jar_out, theme, |evt| {
                                 notifier.notify(CommonEvent::Log(LogRecord::ThemeWriting(evt)));
-                            })
+                            });
+                            if let Err(err) = result {
+                                notifier.notify(CommonEvent::Log(LogRecord::Text(format!(
+                                    "Error: {}",
+                                    err
+                                ))));
+                            }
                         });
                     }
 
@@ -421,7 +428,7 @@ impl App for MyApp {
                         }
 
                         // Update the dialog and check if the user selected a file
-                        // self.file_dialog.update(ctx); // FIXME: Migrate to git eframe and egui
+                        self.file_dialog.update(ctx); // FIXME: Migrate to git eframe and egui
                         if let Some(path) = self.file_dialog.take_selected() {
                             let file = File::open(path).unwrap();
                             let reader = BufReader::new(file);
