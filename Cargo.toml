@@ -1,8 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "cucumber", "entity",
-    "migration"
+    "cucumber", "entity"
 ]
 
 # Defines a size-optimized profile for the WASM bundle in release mode

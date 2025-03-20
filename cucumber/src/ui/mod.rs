@@ -1,11 +1,14 @@
 use std::{
     borrow::Cow,
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     fs::File,
     io::{BufReader, Read},
     path::Path,
     str::FromStr,
-    sync::{mpsc::Receiver, Arc, RwLock},
+    sync::{
+        mpsc::{self, Receiver, Sender},
+        Arc, RwLock,
+    },
 };
 
 use anyhow::anyhow;
@@ -20,7 +23,8 @@ use krakatau2::{
     lib::{classfile, ParserOptions},
     zip,
 };
-use tracing::debug;
+use preview::Preview;
+use tracing::{debug, info};
 use xml::EmitterConfig;
 use xmltree::Element;
 
@@ -33,11 +37,13 @@ use crate::{
     ColorComponents,
 };
 
+mod preview;
+
 pub struct MyApp {
     jar_in: String,
     jar_out: Option<String>,
-    log: Arc<RwLock<VecDeque<LogRecord>>>,
-    theme: Arc<RwLock<Option<CucumberBitwigTheme>>>,
+    log: VecDeque<LogRecord>,
+    theme: Option<CucumberBitwigTheme>,
     selected_color: Option<String>,
     filter: String,
     first_run: bool,
@@ -45,7 +51,32 @@ pub struct MyApp {
     last_mockup_size: Vec2,
     mockup: Vec<u8>,
     img_src: egui::ImageSource<'static>,
-    changed_colors: Arc<RwLock<HashSet<String>>>,
+    changed_colors: BTreeMap<String, NamedColor>,
+    preview: Preview,
+    rx: Receiver<CommonEvent>,
+    notifier: UiNotifier,
+}
+
+#[derive(Clone)]
+struct UiNotifier {
+    ctx: Context,
+    tx: Sender<CommonEvent>,
+}
+
+impl UiNotifier {
+    fn new(ctx: Context, tx: Sender<CommonEvent>) -> Self {
+        Self { ctx, tx }
+    }
+
+    fn notify(&self, event: CommonEvent) {
+        self.tx.send(event).unwrap();
+    }
+}
+
+pub enum CommonEvent {
+    JarParsed { theme: CucumberBitwigTheme },
+    Log(LogRecord),
+    UpdatedImage(Vec<u8>),
 }
 
 #[derive(Debug)]
@@ -204,60 +235,47 @@ impl MyApp {
         ctx.set_fonts(fonts);
 
         let jar_in = jar_in.unwrap();
-        let theme = Arc::new(RwLock::new(None));
-        let log = Arc::new(RwLock::new(VecDeque::with_capacity(256)));
+        let log = VecDeque::with_capacity(256);
 
-        let changed_colors = Arc::new(RwLock::new(HashSet::new()));
+        let (tx, rx) = mpsc::channel();
+
+        let notifier = UiNotifier::new(ctx, tx);
 
         {
             let jar_in = jar_in.clone();
-            let log = log.clone();
-            let theme = theme.clone();
-            let changed_colors = changed_colors.clone();
+
+            let notifier = notifier.clone();
             std::thread::spawn(move || {
-                let loaded_theme = load_theme_from_jar(jar_in, |prog| {
-                    let mut log = log.write().unwrap();
-                    if log.len() == log.capacity() {
-                        log.pop_front();
-                    }
-                    log.push_back(LogRecord::ThemeLoading(prog));
-                    drop(log);
-                    ctx.request_repaint();
+                let theme = load_theme_from_jar(jar_in, |prog| {
+                    notifier.notify(CommonEvent::Log(LogRecord::ThemeLoading(prog)));
                 })
                 .unwrap();
 
-                let mut theme = theme.write().unwrap();
-                *theme = Some(loaded_theme.clone());
-                drop(theme);
-
-                let mut changed_colors = changed_colors.write().unwrap();
-                for (name, _color) in &loaded_theme.named_colors {
+                let mut changed_colors = HashSet::new();
+                for (name, _color) in &theme.named_colors {
                     changed_colors.insert(name.clone());
                 }
-                drop(changed_colors);
-
-                ctx.request_repaint();
+                notifier.notify(CommonEvent::JarParsed { theme });
             });
         }
 
         let mockup = Vec::from(include_bytes!("../../assets/mockup.svg"));
 
         let img_src: egui::ImageSource = egui::ImageSource::Bytes {
-            uri: Cow::Borrowed("bytes://../../assets/mockup.svg"),
+            uri: Cow::Borrowed("bytes://assets/mockup.svg"),
             bytes: egui::load::Bytes::from(mockup.clone()),
         };
 
-        let file_dialog = FileDialog::new()
-            .add_file_filter(
-                "JSON",
-                Arc::new(|path| path.to_string_lossy().to_lowercase().ends_with("json")),
-            );
+        let file_dialog = FileDialog::new().add_file_filter(
+            "JSON",
+            Arc::new(|path| path.to_string_lossy().to_lowercase().ends_with("json")),
+        );
 
         Ok(Self {
             jar_in,
             jar_out,
             log,
-            theme,
+            theme: None,
             filter: String::new(),
             selected_color: None,
             first_run: true,
@@ -265,7 +283,10 @@ impl MyApp {
             last_mockup_size: Vec2::default(),
             mockup: Vec::from(include_bytes!("../../assets/mockup.svg")),
             img_src,
-            changed_colors,
+            changed_colors: BTreeMap::new(),
+            preview: Preview::new(notifier.clone(), mockup),
+            rx,
+            notifier,
         })
     }
 }
@@ -279,10 +300,33 @@ impl App for MyApp {
             self.first_run = false;
         }
 
+        while let Ok(event) = self.rx.try_recv() {
+            match event {
+                CommonEvent::JarParsed { theme } => {
+                    self.theme = Some(theme.clone());
+                    self.preview.request_theme(theme);
+                }
+                CommonEvent::Log(log_record) => {
+                    if self.log.len() == self.log.capacity() {
+                        self.log.pop_front();
+                    }
+                    self.log.push_back(log_record);
+                }
+                CommonEvent::UpdatedImage(img_data) => {
+                    ctx.forget_image("bytes://mockup.svg");
+                    self.img_src = egui::ImageSource::Bytes {
+                        uri: Cow::Borrowed("bytes://mockup.svg"),
+                        bytes: egui::load::Bytes::from(img_data),
+                    };
+                }
+            }
+            ctx.request_repaint();
+        }
+
         let frame = Frame::central_panel(&ctx.style());
 
         if self.selected_color.is_none() {
-            if let Some(theme) = self.theme.read().unwrap().as_ref() {
+            if let Some(theme) = &self.theme {
                 if theme.named_colors.contains_key("On") {
                     self.selected_color = Some("On".into());
                 }
@@ -305,8 +349,7 @@ impl App for MyApp {
                 });
                 ui.add_space(1.0);
                 ui.separator();
-                let mut theme = self.theme.write().unwrap();
-                if let Some(theme) = theme.as_mut() {
+                if let Some(theme) = &mut self.theme {
                     ScrollArea::vertical().show(ui, |ui| {
                         for (name, color) in &mut theme.named_colors {
                             if self.filter.trim().len() > 0 {
@@ -362,18 +405,11 @@ impl App for MyApp {
                     if ui.button("Patch JAR").clicked() {
                         let jar_in = self.jar_in.clone();
                         let jar_out = self.jar_out.clone().unwrap();
-                        let theme = self.theme.read().unwrap().as_ref().cloned().unwrap();
-                        let log = self.log.clone();
-                        let ctx = ctx.clone();
+                        let theme = self.theme.as_ref().cloned().unwrap();
+                        let notifier = self.notifier.clone();
                         std::thread::spawn(move || {
                             write_theme_to_jar(jar_in, jar_out, theme, |evt| {
-                                let mut log = log.write().unwrap();
-                                if log.len() == log.capacity() {
-                                    log.pop_front();
-                                }
-                                log.push_back(LogRecord::ThemeWriting(evt));
-                                drop(log);
-                                ctx.request_repaint();
+                                notifier.notify(CommonEvent::Log(LogRecord::ThemeWriting(evt)));
                             })
                         });
                     }
@@ -385,13 +421,13 @@ impl App for MyApp {
                         }
 
                         // Update the dialog and check if the user selected a file
-                        self.file_dialog.update(ctx);
+                        // self.file_dialog.update(ctx); // FIXME: Migrate to git eframe and egui
                         if let Some(path) = self.file_dialog.take_selected() {
                             let file = File::open(path).unwrap();
                             let reader = BufReader::new(file);
                             let berikai_theme: BerikaiTheme =
                                 serde_json::from_reader(reader).unwrap();
-                            if let Some(theme) = self.theme.write().unwrap().as_mut() {
+                            if let Some(theme) = self.theme.as_mut() {
                                 for (name, color) in berikai_theme
                                     .window
                                     .iter()
@@ -402,17 +438,18 @@ impl App for MyApp {
                                         .color()
                                         .to_srgba_unmultiplied();
                                     let hsva = Hsva::from_srgba_unmultiplied(rgba);
-                                    theme.named_colors.insert(
-                                        name.clone(),
-                                        NamedColor::Absolute(AbsoluteColor {
-                                            h: hsva.h,
-                                            s: hsva.s,
-                                            v: hsva.v,
-                                            a: hsva.a,
-                                            compositing_mode: None,
-                                        }),
-                                    );
-                                    self.changed_colors.write().unwrap().insert(name.clone());
+
+                                    let updated_color = NamedColor::Absolute(AbsoluteColor {
+                                        h: hsva.h,
+                                        s: hsva.s,
+                                        v: hsva.v,
+                                        a: hsva.a,
+                                        compositing_mode: None,
+                                    });
+                                    theme
+                                        .named_colors
+                                        .insert(name.clone(), updated_color.clone());
+                                    self.changed_colors.insert(name.clone(), updated_color);
                                 }
                             }
                         }
@@ -431,10 +468,8 @@ impl App for MyApp {
             .min_width(330.0)
             .resizable(false)
             .show(ctx, |ui| {
-                let log = self.log.read().unwrap();
-
                 ScrollArea::vertical().show(ui, |ui| {
-                    for rec in log.iter() {
+                    for rec in self.log.iter() {
                         ui.label(format!("{:?}", rec));
                     }
                     // if let Some(theme) = self.theme.read().unwrap().as_ref() {
@@ -447,15 +482,16 @@ impl App for MyApp {
             .frame(Frame::none().fill(ctx.style().visuals.window_fill))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    if let Some(color_name) = &self.selected_color {
+                    if let (Some(color_name), Some(theme)) =
+                        (&self.selected_color, self.theme.as_mut())
+                    {
                         Frame::none()
                             .inner_margin(Margin::symmetric(24.0, 18.0))
                             .show(ui, |ui| {
                                 ui.vertical(|ui| {
                                     ui.label(color_name);
-                                    let mut theme = self.theme.write().unwrap();
                                     if let Some(NamedColor::Absolute(absolute_color)) =
-                                        theme.as_mut().unwrap().named_colors.get_mut(color_name)
+                                        theme.named_colors.get_mut(color_name)
                                     {
                                         if let Some(compositing_mode) =
                                             &absolute_color.compositing_mode
@@ -484,10 +520,12 @@ impl App for MyApp {
                                                     )
                                                     .changed()
                                                 {
-                                                    self.changed_colors
-                                                        .write()
-                                                        .unwrap()
-                                                        .insert(color_name.clone());
+                                                    self.changed_colors.insert(
+                                                        color_name.clone(),
+                                                        NamedColor::Absolute(
+                                                            absolute_color.clone(),
+                                                        ),
+                                                    );
                                                 }
                                                 if ui
                                                     .add(
@@ -498,10 +536,12 @@ impl App for MyApp {
                                                     )
                                                     .changed()
                                                 {
-                                                    self.changed_colors
-                                                        .write()
-                                                        .unwrap()
-                                                        .insert(color_name.clone());
+                                                    self.changed_colors.insert(
+                                                        color_name.clone(),
+                                                        NamedColor::Absolute(
+                                                            absolute_color.clone(),
+                                                        ),
+                                                    );
                                                 }
                                                 if ui
                                                     .add(
@@ -512,10 +552,12 @@ impl App for MyApp {
                                                     )
                                                     .changed()
                                                 {
-                                                    self.changed_colors
-                                                        .write()
-                                                        .unwrap()
-                                                        .insert(color_name.clone());
+                                                    self.changed_colors.insert(
+                                                        color_name.clone(),
+                                                        NamedColor::Absolute(
+                                                            absolute_color.clone(),
+                                                        ),
+                                                    );
                                                 }
                                                 ui.add_space(5.0);
                                             });
@@ -539,10 +581,12 @@ impl App for MyApp {
                                                     absolute_color.s = hsva.s;
                                                     absolute_color.v = hsva.v;
                                                     absolute_color.a = hsva.a;
-                                                    self.changed_colors
-                                                        .write()
-                                                        .unwrap()
-                                                        .insert(color_name.clone());
+                                                    self.changed_colors.insert(
+                                                        color_name.clone(),
+                                                        NamedColor::Absolute(
+                                                            absolute_color.clone(),
+                                                        ),
+                                                    );
                                                 }
                                             });
                                         }
@@ -557,167 +601,29 @@ impl App for MyApp {
         egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
             let avail_size = ui.available_size();
             let size_diff = (avail_size - self.last_mockup_size).abs();
-            if size_diff.x > 200.0
-                || size_diff.y > 200.0
-                || !self.changed_colors.read().unwrap().is_empty()
-            {
+
+            if size_diff.x > 200.0 || size_diff.y > 200.0 {
                 self.last_mockup_size = avail_size;
-
-                let uri = self.img_src.uri().unwrap();
-                ctx.forget_image(uri);
-
-                if let Some(theme) = self.theme.read().unwrap().as_ref() {
-                    // Step 1: Parse the SVG XML
-                    let mut root = Element::parse(self.mockup.as_slice()).unwrap();
-                    // Step 2: Traverse and modify elements with the target class
-                    fn modify_element(element: &mut Element, target_class: &str, new_fill: &str) {
-                        if let Some(class) = element.attributes.get("class") {
-                            if class == target_class {
-                                if element.attributes.contains_key("fill") {
-                                    element
-                                        .attributes
-                                        .insert("fill".to_string(), new_fill.to_string());
-                                } else {
-                                    element
-                                        .attributes
-                                        .insert("stop-color".to_string(), new_fill.to_string());
-                                }
-                            }
-                        }
-
-                        // Recursively process child elements
-                        for child in element.children.iter_mut() {
-                            if let xmltree::XMLNode::Element(ref mut child_element) = child {
-                                modify_element(child_element, target_class, new_fill);
-                            }
-                        }
-                    }
-                    fn modify_element_relative(
-                        element: &mut Element,
-                        target_class: &str,
-                        dh: f32,
-                        ds: f32,
-                        dv: f32,
-                        theme: &CucumberBitwigTheme,
-                    ) {
-                        if let Some(class) = element.attributes.get("class") {
-                            if class == target_class {
-                                if let Some(bg) = element.attributes.get("bg") {
-                                    if let Some((_, NamedColor::Absolute(absolute_color))) =
-                                        theme.named_colors.iter().find(|(name, _b)| {
-                                            &name.to_lowercase().replace(" ", "-") == bg
-                                        })
-                                    {
-                                        let [r, g, b] = Hsva::new(
-                                            absolute_color.h,
-                                            absolute_color.s,
-                                            absolute_color.v,
-                                            1.0,
-                                        )
-                                        .to_srgb();
-                                        let rgb =
-                                            colorsys::Rgb::from((r as f64, g as f64, b as f64));
-                                        let hsl = colorsys::Hsl::from(rgb);
-                                        let h = (hsl.hue() + dh as f64).rem_euclid(360.0);
-                                        let s = (hsl.saturation() / 100.0 + ds as f64)
-                                            .clamp(0.0, 1.0)
-                                            * 100.0;
-                                        let l = (hsl.lightness() / 100.0 + dv as f64 * 0.5)
-                                            .clamp(0.0, 1.0)
-                                            * 100.0;
-                                        let hsl = colorsys::Hsl::new(h, s, l, None);
-                                        let rgb = colorsys::Rgb::from(hsl);
-
-                                        let new_fill = format!(
-                                            "#{:02X}{:02X}{:02X}{:02X}",
-                                            (rgb.red()) as u8,
-                                            (rgb.green()) as u8,
-                                            (rgb.blue()) as u8,
-                                            255
-                                        );
-                                        element
-                                            .attributes
-                                            .insert("fill".to_string(), new_fill.to_string());
-                                    }
-                                }
-                            }
-                        }
-
-                        // Recursively process child elements
-                        for child in element.children.iter_mut() {
-                            if let xmltree::XMLNode::Element(ref mut child_element) = child {
-                                modify_element_relative(
-                                    child_element,
-                                    target_class,
-                                    dh,
-                                    ds,
-                                    dv,
-                                    &theme,
-                                );
-                            }
-                        }
-                    }
-                    for changed_color in self.changed_colors.write().unwrap().drain() {
-                        if let NamedColor::Absolute(repl) =
-                            theme.named_colors.get(&changed_color).as_ref().unwrap()
-                        {
-                            if let Some(CompositingMode::RelativeToBackground) =
-                                repl.compositing_mode
-                            {
-                                modify_element_relative(
-                                    &mut root,
-                                    &changed_color.to_lowercase().replace(" ", "-"),
-                                    repl.h,
-                                    repl.s,
-                                    repl.v,
-                                    &theme,
-                                );
-                            } else {
-                                let [r, g, b, a] = Hsva::new(repl.h, repl.s, repl.v, repl.a)
-                                    .to_srgba_unmultiplied();
-                                let hex = format!("#{:02X}{:02X}{:02X}{:02X}", r, g, b, a);
-                                modify_element(
-                                    &mut root,
-                                    &changed_color.to_lowercase().replace(" ", "-"),
-                                    &hex,
-                                );
-                            }
-                        }
-                    }
-                    // Step 3: Serialize the modified SVG back to bytes
-                    let mut output = Vec::new();
-                    let config = EmitterConfig::new().perform_indent(true); // Optional pretty printing
-                    root.write_with_config(&mut output, config).unwrap();
-                    self.mockup = output;
+                if let Some(uri) = self.img_src.uri() {
+                    ctx.forget_image(uri);
                 }
+            }
 
-                self.img_src = egui::ImageSource::Bytes {
-                    uri: Cow::Borrowed("bytes://../../assets/mockup.svg"),
-                    bytes: egui::load::Bytes::from(self.mockup.clone()),
-                };
+            if !self.changed_colors.is_empty() {
+                let mut changed_colors = BTreeMap::new();
+                std::mem::swap(&mut self.changed_colors, &mut changed_colors);
+                self.preview.request_recolor(changed_colors);
             }
 
             ScrollArea::both().show(ui, |ui| {
+                let s = std::time::Instant::now();
                 ui.add_sized(
                     // ui.available_size() * Vec2::new(2.0, 2.0), // zoom example
                     ui.available_size(),
                     egui::Image::new(self.img_src.clone()),
                 );
+                let e = s.elapsed();
             });
         });
-    }
-}
-
-struct ColorizerTask {
-    changed_colors: HashSet<String>,
-}
-
-fn colorizer_thread(rx: Receiver<ColorizerTask>) {
-    loop {
-        // Wait for tasks to appear
-        let mut task = rx.recv().unwrap();
-        while let Ok(another_task) = rx.try_recv() {
-            task = another_task
-        }
     }
 }
