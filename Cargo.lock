@@ -2415,7 +2415,7 @@ checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 [[package]]
 name = "krakatau2"
 version = "2.0.0-alpha"
-source = "git+ssh://git@github.com/zezic/Krakatau.git?rev=c5093b5f94ce0e58931f80b283305b87b0eef824#c5093b5f94ce0e58931f80b283305b87b0eef824"
+source = "git+https://github.com/zezic/Krakatau.git?rev=c5093b5f94ce0e58931f80b283305b87b0eef824#c5093b5f94ce0e58931f80b283305b87b0eef824"
 dependencies = [
  "anyhow",
  "clap 3.2.25",
