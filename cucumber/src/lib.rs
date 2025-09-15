@@ -1,8 +1,16 @@
-use std::{collections::HashMap, env, fmt::Debug, fs, io::Read, path::Path, time::Instant};
+use std::{
+    collections::HashMap,
+    env,
+    fmt::Debug,
+    fs,
+    io::Read,
+    path::Path,
+    time::{Duration, Instant},
+};
 
 use anyhow::anyhow;
 
-use colorsys::{ColorTransform, Hsl, Rgb, SaturationInSpace};
+use colorsys::{ColorTransform, Rgb, SaturationInSpace};
 use eframe::epaint::Hsva;
 // use indicatif::ProgressBar;
 use krakatau2::{
@@ -21,13 +29,16 @@ use krakatau2::{
     },
     zip::{self, ZipArchive},
 };
-use tracing::debug;
+use tracing::{debug, info};
 use types::{CompositingMode, ThemeLoadingEvent};
+
+use crate::types::Stage;
 
 pub mod exchange;
 pub mod patching;
 pub mod types;
 pub mod ui;
+pub mod writing;
 
 // Will search constant pool for that (inside Utf8 entry)
 // Contain most of the colors and methods to set them
@@ -284,7 +295,7 @@ fn replace_named_color<'a>(
                 compositing_mode,
                 Some(CompositingMode::RelativeToBackground)
             ) {
-                unimplemented!("Not done yet, but it's easy");
+                // unimplemented!("Not done yet, but it's easy");
             }
             let rgbai_method_desc = &palette_color_meths.rgba_i_absolute;
 
@@ -418,7 +429,7 @@ pub fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
         no_short_code_attr: true,
     };
 
-    report_progress(ThemeLoadingEvent::Aaa);
+    report_progress(Stage::LoadingFileNames.into());
 
     let file_names = zip.file_names().map(Into::into).collect::<Vec<String>>();
 
@@ -428,11 +439,13 @@ pub fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
 
     let mut data = Vec::new();
 
-    report_progress(ThemeLoadingEvent::Bbb);
+    report_progress(ThemeLoadingEvent {
+        stage: Stage::ScanningClasses,
+        progress: types::StageProgress::Percentage(0.0),
+    });
 
-    // let progress_bar = ProgressBar::new(file_names.len() as u64);
     let mut init_class_name = None;
-    for file_name in &file_names {
+    for (idx, file_name) in file_names.iter().enumerate() {
         let mut file = zip.by_name(file_name).unwrap();
 
         data.clear();
@@ -476,10 +489,21 @@ pub fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
                 }
             }
         }
-        // progress_bar.inc(1);
         drop(file);
+
+        // Report progress every 300 files, which is about 100 reports per typical 30k bloated JAR
+        if idx % 300 == 0 {
+            let progress = idx as f32 / file_names.len() as f32;
+            report_progress(ThemeLoadingEvent {
+                stage: Stage::ScanningClasses,
+                progress: types::StageProgress::Percentage(progress),
+            });
+        }
     }
-    // progress_bar.finish();
+    report_progress(ThemeLoadingEvent {
+        stage: Stage::ScanningClasses,
+        progress: types::StageProgress::Done,
+    });
     debug!("------------");
 
     let mut all_named_colors = Vec::new();
@@ -487,7 +511,11 @@ pub fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
     let mut known_colors = HashMap::new();
 
     if let Some(palette_color_meths) = &palette_color_meths {
-        for file_name in &file_names {
+        report_progress(ThemeLoadingEvent {
+            stage: Stage::SearchingColorDefinitions,
+            progress: types::StageProgress::Percentage(0.0),
+        });
+        for (idx, file_name) in file_names.iter().enumerate() {
             let mut file = zip.by_name(&file_name).unwrap();
 
             data.clear();
@@ -505,7 +533,20 @@ pub fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
             );
             all_named_colors.extend(found);
             drop(file);
+
+            // Report progress every 300 files, which is about 100 reports per typical 30k bloated JAR
+            if idx % 300 == 0 {
+                let progress = idx as f32 / file_names.len() as f32;
+                report_progress(ThemeLoadingEvent {
+                    stage: Stage::SearchingColorDefinitions,
+                    progress: types::StageProgress::Percentage(progress),
+                });
+            }
         }
+        report_progress(ThemeLoadingEvent {
+            stage: Stage::SearchingColorDefinitions,
+            progress: types::StageProgress::Done,
+        });
     }
 
     for named_color in &all_named_colors {

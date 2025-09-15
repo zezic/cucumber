@@ -85,9 +85,46 @@ impl ColorConst {
 }
 
 #[derive(Debug)]
-pub enum ThemeLoadingEvent {
-    Aaa,
-    Bbb,
+pub struct ThemeLoadingEvent {
+    pub stage: Stage,
+    pub progress: StageProgress,
+}
+
+#[derive(Debug)]
+pub enum Stage {
+    LoadingFileNames,
+    ScanningClasses,
+    SearchingColorDefinitions,
+    ExtractingGeneralGoodies,
+    ExtractingTheme,
+}
+
+impl Stage {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Stage::LoadingFileNames => "Loading File Names",
+            Stage::ScanningClasses => "Scanning Classes",
+            Stage::SearchingColorDefinitions => "Searching Color Definitions",
+            Stage::ExtractingGeneralGoodies => "Extracting General Goodies",
+            Stage::ExtractingTheme => "Extracting Theme",
+        }
+    }
+}
+
+impl From<Stage> for ThemeLoadingEvent {
+    fn from(value: Stage) -> Self {
+        ThemeLoadingEvent {
+            stage: value,
+            progress: StageProgress::Unknown,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum StageProgress {
+    Unknown,
+    Percentage(f32),
+    Done,
 }
 
 #[derive(Default, Clone, Debug, Deserialize, Serialize)]

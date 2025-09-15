@@ -10,11 +10,11 @@ anyhow = "1.0.72"
 clap = { version = "4.5.21", features = ["derive"] }
 colored = "2.1.0"
 colorsys = "0.6.7"
-eframe = "0.29.1"
+eframe = "0.32.3"
 # eframe = { git = "ssh://git@github.com/bircni/egui.git", rev = "d1ca8ec0cd9bf4974f0ba11bbb4a8f03d951c8f3" }
 # eframe = { path = "../../egui/crates/eframe" }
-egui-file-dialog = "0.7.0"
-egui_extras = { version = "0.29.1", features = ["all_loaders"] }
+egui-file-dialog = "0.11.0"
+egui_extras = { version = "0.32.1", features = ["all_loaders"] }
 # egui_extras = { git = "ssh://github.com/bircni/egui.git", rev = "d1ca8ec0cd9bf4974f0ba11bbb4a8f03d951c8f3", features = ["all_loaders"] }
 # egui_extras = { path = "../../egui/crates/egui_extras", features = [
 #     "all_loaders",
@@ -23,8 +23,13 @@ indicatif = "0.17.6"
 krakatau2 = { git = "https://github.com/zezic/Krakatau.git", rev = "c5093b5f94ce0e58931f80b283305b87b0eef824" }
 md5 = "0.7.0"
 rand = "0.8.5"
+re_ui = { git = "https://github.com/rerun-io/rerun", rev = "4c854506cc571bb11f7a851b9555f071a7bd3f5f" }
 serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
+smallvec = "1.15.1"
+strum = "0.27.2"
+strum_macros = "0.27.2"
+sublime_fuzzy = "0.7.0"
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
 xml-rs = "0.8.16"
