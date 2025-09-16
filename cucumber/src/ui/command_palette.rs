@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use eframe::egui::{self, Align2, Key, NumExt, Vec2};
 
-use crate::ui::commands::ScopeCommand;
+use crate::ui::commands::CucumberCommand;
 
 #[derive(Default)]
 pub struct CommandPalette {
@@ -18,7 +18,7 @@ impl CommandPalette {
 
     /// Show the command palette, if it is visible.
     #[must_use = "Returns the command that was selected"]
-    pub fn show(&mut self, egui_ctx: &egui::Context) -> Option<ScopeCommand> {
+    pub fn show(&mut self, egui_ctx: &egui::Context) -> Option<CucumberCommand> {
         self.visible &= !egui_ctx.input_mut(|i| i.key_pressed(Key::Escape));
         if !self.visible {
             self.query.clear();
@@ -49,7 +49,7 @@ impl CommandPalette {
     }
 
     #[must_use = "Returns the command that was selected"]
-    fn window_content_ui(&mut self, ui: &mut egui::Ui) -> Option<ScopeCommand> {
+    fn window_content_ui(&mut self, ui: &mut egui::Ui) -> Option<CucumberCommand> {
         // Check _before_ we add the `TextEdit`, so it doesn't steal it.
         let enter_pressed = ui.input_mut(|i| i.consume_key(Default::default(), Key::Enter));
 
@@ -85,7 +85,7 @@ impl CommandPalette {
         ui: &mut egui::Ui,
         enter_pressed: bool,
         mut scroll_to_selected_alternative: bool,
-    ) -> Option<ScopeCommand> {
+    ) -> Option<CucumberCommand> {
         ui.spacing_mut().item_spacing.y = 0.0;
 
         scroll_to_selected_alternative |= ui.input(|i| i.key_pressed(Key::ArrowUp));
@@ -188,7 +188,7 @@ impl CommandPalette {
 }
 
 struct FuzzyMatch {
-    command: ScopeCommand,
+    command: CucumberCommand,
     score: isize,
     fuzzy_match: Option<sublime_fuzzy::Match>,
 }
@@ -197,7 +197,7 @@ fn commands_that_match(query: &str) -> Vec<FuzzyMatch> {
     use strum::IntoEnumIterator as _;
 
     if query.is_empty() {
-        ScopeCommand::iter()
+        CucumberCommand::iter()
             .map(|command| FuzzyMatch {
                 command,
                 score: 0,
@@ -205,7 +205,7 @@ fn commands_that_match(query: &str) -> Vec<FuzzyMatch> {
             })
             .collect()
     } else {
-        let mut matches: Vec<_> = ScopeCommand::iter()
+        let mut matches: Vec<_> = CucumberCommand::iter()
             .filter_map(|command| {
                 let target_text = command.text();
                 sublime_fuzzy::best_match(query, target_text).map(|fuzzy_match| FuzzyMatch {

@@ -204,7 +204,12 @@ impl App for MyApp {
 
         let frame = Frame::central_panel(&ctx.style());
 
-        top_bar::top_bar(&self.command_sender, &mut self.panels_state, ctx);
+        top_bar::top_bar(
+            &self.command_sender,
+            &mut self.panels_state,
+            ctx,
+            &self.status_bar.progress,
+        );
 
         egui::TopBottomPanel::bottom("bottom_panel").show_animated(
             ctx,

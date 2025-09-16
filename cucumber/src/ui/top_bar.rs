@@ -1,13 +1,19 @@
+use eframe::egui::Button;
 #[cfg(not(target_arch = "wasm32"))]
 use eframe::egui::{self, os::OperatingSystem};
 use re_ui::{ContextExt, UiExt};
 
-use crate::ui::{commands::CommandSender, commands::ScopeCommand, PanelsState};
+use crate::ui::{
+    commands::{CommandSender, CucumberCommand, CucumberCommandSender},
+    status_bar::Progress,
+    PanelsState,
+};
 
 pub fn top_bar(
     command_sender: &CommandSender,
     mini_state: &mut PanelsState,
     egui_ctx: &egui::Context,
+    progress: &Option<Progress>,
 ) {
     let top_bar_style = egui_ctx.top_bar_style(false);
 
@@ -38,13 +44,18 @@ pub fn top_bar(
 
             ui.menu_button("File", |ui| file_menu(ui, command_sender));
             ui.menu_button("View", |ui| view_menu(ui, command_sender));
-            // if ui
-            //     .button("Dump tree")
-            //     .on_hover_ui(|ui| ScopeCommand::DumpTree.tooltip_ui(ui))
-            //     .clicked()
-            // {
-            //     command_sender.send_ui(ScopeCommand::DumpTree);
-            // }
+
+            ui.separator();
+
+            if ui
+                .add_enabled(
+                    progress.is_none(),
+                    Button::new("Save JAR").right_text(&re_ui::icons::DOWNLOAD),
+                )
+                .clicked()
+            {
+                command_sender.send_ui(CucumberCommand::SaveJar);
+            }
 
             top_bar_ui(mini_state, ui);
         });
@@ -82,24 +93,24 @@ fn top_bar_ui(mini_state: &mut PanelsState, ui: &mut egui::Ui) {
 }
 
 fn file_menu(ui: &mut egui::Ui, command_sender: &CommandSender) {
-    ScopeCommand::ToggleSourceCreator.menu_button_ui(ui, command_sender);
+    CucumberCommand::ToggleSourceCreator.menu_button_ui(ui, command_sender);
     ui.separator();
-    ScopeCommand::AddOscillograph.menu_button_ui(ui, command_sender);
-    ScopeCommand::AddValues.menu_button_ui(ui, command_sender);
-    ScopeCommand::AddXyPlot.menu_button_ui(ui, command_sender);
+    CucumberCommand::AddOscillograph.menu_button_ui(ui, command_sender);
+    CucumberCommand::AddValues.menu_button_ui(ui, command_sender);
+    CucumberCommand::AddXyPlot.menu_button_ui(ui, command_sender);
     ui.separator();
-    ScopeCommand::WriteValuesCSV.menu_button_ui(ui, command_sender);
+    CucumberCommand::WriteValuesCSV.menu_button_ui(ui, command_sender);
     ui.separator();
-    ScopeCommand::Quit.menu_button_ui(ui, command_sender);
+    CucumberCommand::Quit.menu_button_ui(ui, command_sender);
 }
 
 fn view_menu(ui: &mut egui::Ui, command_sender: &CommandSender) {
-    ScopeCommand::ToggleFullscreen.menu_button_ui(ui, command_sender);
-    ScopeCommand::ToggleTheme.menu_button_ui(ui, command_sender);
+    CucumberCommand::ToggleFullscreen.menu_button_ui(ui, command_sender);
+    CucumberCommand::ToggleTheme.menu_button_ui(ui, command_sender);
     ui.separator();
-    ScopeCommand::ZoomIn.menu_button_ui(ui, command_sender);
-    ScopeCommand::ZoomOut.menu_button_ui(ui, command_sender);
-    ScopeCommand::ZoomReset.menu_button_ui(ui, command_sender);
+    CucumberCommand::ZoomIn.menu_button_ui(ui, command_sender);
+    CucumberCommand::ZoomOut.menu_button_ui(ui, command_sender);
+    CucumberCommand::ZoomReset.menu_button_ui(ui, command_sender);
     ui.separator();
-    ScopeCommand::ToggleCommandPalette.menu_button_ui(ui, command_sender);
+    CucumberCommand::ToggleCommandPalette.menu_button_ui(ui, command_sender);
 }

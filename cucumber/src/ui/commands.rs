@@ -3,8 +3,8 @@ use re_ui::ContextExt;
 use smallvec::{smallvec, SmallVec};
 
 /// Interface for sending [`UICommand`] messages.
-pub trait ScopeCommandSender {
-    fn send_ui(&self, command: ScopeCommand);
+pub trait CucumberCommandSender {
+    fn send_ui(&self, command: CucumberCommand);
 }
 
 /// All the commands we support.
@@ -13,7 +13,7 @@ pub trait ScopeCommandSender {
 /// some have keyboard shortcuts,
 /// and all are visible in the [`crate::CommandPalette`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, strum_macros::EnumIter)]
-pub enum ScopeCommand {
+pub enum CucumberCommand {
     #[cfg(not(target_arch = "wasm32"))]
     Quit,
     // Settings,
@@ -35,9 +35,10 @@ pub enum ScopeCommand {
     // Dev commands
     // DumpTree,
     WriteValuesCSV,
+    SaveJar,
 }
 
-impl ScopeCommand {
+impl CucumberCommand {
     pub fn text(self) -> &'static str {
         self.text_and_tooltip().0
     }
@@ -93,6 +94,7 @@ impl ScopeCommand {
                 "Add a new X-Y plot pane to the current workspace",
             ),
             Self::WriteValuesCSV => ("Export to CSV...", "Export frames and values to CSV file"),
+            Self::SaveJar => ("Save JAR", "Save the current workspace to a JAR file"),
         }
     }
 
@@ -161,6 +163,7 @@ impl ScopeCommand {
             Self::AddXyPlot => smallvec![],
             Self::WriteValuesCSV => smallvec![],
             // Self::DumpTree => smallvec![],
+            Self::SaveJar => smallvec![cmd(Key::S)],
         }
     }
 
@@ -230,7 +233,7 @@ impl ScopeCommand {
     pub fn menu_button_ui(
         self,
         ui: &mut egui::Ui,
-        command_sender: &impl ScopeCommandSender,
+        command_sender: &impl CucumberCommandSender,
     ) -> egui::Response {
         let button = self.menu_button(ui.ctx());
         let response = ui.add(button).on_hover_text(self.tooltip());
@@ -305,9 +308,9 @@ fn check_for_clashing_command_shortcuts() {
 
     use strum::IntoEnumIterator as _;
 
-    for a_cmd in ScopeCommand::iter() {
+    for a_cmd in CucumberCommand::iter() {
         for a_shortcut in a_cmd.kb_shortcuts() {
-            for b_cmd in ScopeCommand::iter() {
+            for b_cmd in CucumberCommand::iter() {
                 if a_cmd == b_cmd {
                     continue;
                 }
@@ -326,22 +329,22 @@ fn check_for_clashing_command_shortcuts() {
 
 /// Sender that queues up the execution of a command.
 #[derive(Clone)]
-pub struct CommandSender(std::sync::mpsc::Sender<ScopeCommand>);
+pub struct CommandSender(std::sync::mpsc::Sender<CucumberCommand>);
 
-impl ScopeCommandSender for CommandSender {
+impl CucumberCommandSender for CommandSender {
     /// Send a command to be executed.
-    fn send_ui(&self, command: ScopeCommand) {
+    fn send_ui(&self, command: CucumberCommand) {
         // The only way this can fail is if the receiver has been dropped.
         self.0.send(command).ok();
     }
 }
 
 /// Receiver for the [`CommandSender`]
-pub struct CommandReceiver(std::sync::mpsc::Receiver<ScopeCommand>);
+pub struct CommandReceiver(std::sync::mpsc::Receiver<CucumberCommand>);
 
 impl CommandReceiver {
     /// Receive a command to be executed if any is queued.
-    pub fn recv(&self) -> Option<ScopeCommand> {
+    pub fn recv(&self) -> Option<CucumberCommand> {
         // The only way this can fail (other than being empty)
         // is if the sender has been dropped.
         self.0.try_recv().ok()
