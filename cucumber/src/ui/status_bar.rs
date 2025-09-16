@@ -6,13 +6,14 @@ pub struct StatusBar {
 }
 
 pub struct Progress {
+    group: &'static str,
     name: &'static str,
     value: Option<f32>,
 }
 
 impl Progress {
-    pub fn new(name: &'static str, value: Option<f32>) -> Self {
-        Progress { name, value }
+    pub fn new(group: &'static str, name: &'static str, value: Option<f32>) -> Self {
+        Progress { group, name, value }
     }
 }
 

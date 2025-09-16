@@ -1182,9 +1182,9 @@ dependencies = [
 
 [[package]]
 name = "colorsys"
-version = "0.6.7"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54261aba646433cb567ec89844be4c4825ca92a4f8afba52fc4dd88436e31bbd"
+checksum = "45895c323df503d5083bd1062d7a1459e24f5524d9ae746b2699d096dde883e9"
 
 [[package]]
 name = "combine"

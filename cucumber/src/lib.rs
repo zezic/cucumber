@@ -30,7 +30,7 @@ use krakatau2::{
     zip::{self, ZipArchive},
 };
 use tracing::{debug, info};
-use types::{CompositingMode, ThemeLoadingEvent};
+use types::{CompositingMode, ThemeProcessingEvent};
 
 use crate::types::Stage;
 
@@ -264,7 +264,7 @@ fn replace_named_color<'a>(
 ) -> Option<()> {
     if !matches!(
         new_value,
-        ColorComponents::Rgbai(..) | ColorComponents::Hsvf(..)
+        ColorComponents::Rgbai(..) | ColorComponents::DeltaHsvf(..)
     ) {
         todo!("Only Rgbai and Hsvf supported for the moment");
     }
@@ -423,7 +423,7 @@ fn replace_named_color<'a>(
 
 pub fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
     zip: &mut ZipArchive<R>,
-    mut report_progress: impl FnMut(ThemeLoadingEvent),
+    mut report_progress: impl FnMut(ThemeProcessingEvent),
 ) -> anyhow::Result<GeneralGoodies> {
     const PARSER_OPTIONS: ParserOptions = ParserOptions {
         no_short_code_attr: true,
@@ -439,7 +439,7 @@ pub fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
 
     let mut data = Vec::new();
 
-    report_progress(ThemeLoadingEvent {
+    report_progress(ThemeProcessingEvent {
         stage: Stage::ScanningClasses,
         progress: types::StageProgress::Percentage(0.0),
     });
@@ -494,13 +494,13 @@ pub fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
         // Report progress every 300 files, which is about 100 reports per typical 30k bloated JAR
         if idx % 300 == 0 {
             let progress = idx as f32 / file_names.len() as f32;
-            report_progress(ThemeLoadingEvent {
+            report_progress(ThemeProcessingEvent {
                 stage: Stage::ScanningClasses,
                 progress: types::StageProgress::Percentage(progress),
             });
         }
     }
-    report_progress(ThemeLoadingEvent {
+    report_progress(ThemeProcessingEvent {
         stage: Stage::ScanningClasses,
         progress: types::StageProgress::Done,
     });
@@ -511,7 +511,7 @@ pub fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
     let mut known_colors = HashMap::new();
 
     if let Some(palette_color_meths) = &palette_color_meths {
-        report_progress(ThemeLoadingEvent {
+        report_progress(ThemeProcessingEvent {
             stage: Stage::SearchingColorDefinitions,
             progress: types::StageProgress::Percentage(0.0),
         });
@@ -537,13 +537,13 @@ pub fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
             // Report progress every 300 files, which is about 100 reports per typical 30k bloated JAR
             if idx % 300 == 0 {
                 let progress = idx as f32 / file_names.len() as f32;
-                report_progress(ThemeLoadingEvent {
+                report_progress(ThemeProcessingEvent {
                     stage: Stage::SearchingColorDefinitions,
                     progress: types::StageProgress::Percentage(progress),
                 });
             }
         }
-        report_progress(ThemeLoadingEvent {
+        report_progress(ThemeProcessingEvent {
             stage: Stage::SearchingColorDefinitions,
             progress: types::StageProgress::Done,
         });
@@ -740,7 +740,7 @@ impl MethodSignatureKind {
             MethodSignatureKind::Si => ColorComponents::Grayscale(int(1)),
             MethodSignatureKind::Siii => ColorComponents::Rgbi(int(3), int(2), int(1)),
             MethodSignatureKind::Siiii => ColorComponents::Rgbai(int(4), int(3), int(2), int(1)),
-            MethodSignatureKind::Sfff => ColorComponents::Hsvf(float(3), float(2), float(1)),
+            MethodSignatureKind::Sfff => ColorComponents::DeltaHsvf(float(3), float(2), float(1)),
             MethodSignatureKind::SRfff => unimplemented!(),
             MethodSignatureKind::SSfff => {
                 let ix = &bytecode.0.get(idx - 4).unwrap().1;
@@ -773,7 +773,7 @@ pub enum ColorComponents {
     Grayscale(u8),
     Rgbi(u8, u8, u8),
     Rgbai(u8, u8, u8, u8),
-    Hsvf(f32, f32, f32),
+    DeltaHsvf(f32, f32, f32),
     Rgbaf(f32, f32, f32, f32),
     Rgbad(f64, f64, f64, f64),
     #[allow(dead_code)]
@@ -793,7 +793,7 @@ impl ColorComponents {
             ColorComponents::Grayscale(_) => 255,
             ColorComponents::Rgbi(_, _, _) => 255,
             ColorComponents::Rgbai(_, _, _, a) => *a,
-            ColorComponents::Hsvf(_, _, _) => 255,
+            ColorComponents::DeltaHsvf(_, _, _) => 255,
             ColorComponents::Rgbaf(_, _, _, a) => (a * 255.0) as u8,
             ColorComponents::Rgbad(_, _, _, a) => (a * 255.0) as u8,
             ColorComponents::RefAndAdjust(_, _, _, _) => return None,
@@ -817,7 +817,7 @@ impl ColorComponents {
                 }
                 (ixs, None)
             }
-            ColorComponents::Hsvf(h, s, v) => {
+            ColorComponents::DeltaHsvf(h, s, v) => {
                 let mut ixs = vec![];
                 let mut floats = vec![];
                 for (idx, comp) in [h, s, v].into_iter().enumerate() {
@@ -843,7 +843,7 @@ impl ColorComponents {
             ColorComponents::Grayscale(v) => (*v, *v, *v),
             ColorComponents::Rgbi(r, g, b) => (*r, *g, *b),
             ColorComponents::Rgbai(r, g, b, _a) => (*r, *g, *b),
-            ColorComponents::Hsvf(h, s, v) => {
+            ColorComponents::DeltaHsvf(dh, ds, dv) => {
                 debug!("It's dh ds dv, it's not absolute color");
                 return None;
             }
@@ -869,16 +869,6 @@ impl ColorComponents {
             }
         };
         Some(components)
-    }
-
-    pub fn to_hsv(&self, known_colors: &HashMap<String, ColorComponents>) -> (f32, f32, f32) {
-        if let ColorComponents::Hsvf(dh, ds, dv) = self {
-            (*dh, *ds, *dv)
-        } else {
-            let (r, g, b) = self.to_rgb(known_colors).unwrap();
-            let hsva = Hsva::from_srgb([r, g, b]);
-            (hsva.h, hsva.s, hsva.v)
-        }
     }
 }
 
@@ -1325,7 +1315,7 @@ impl PaletteColorMethods {
             ColorComponents::Grayscale(_) => &self.grayscale_i,
             ColorComponents::Rgbi(_, _, _) => &self.rgb_i,
             ColorComponents::Rgbai(_, _, _, _) => &self.rgba_i_absolute,
-            ColorComponents::Hsvf(_, _, _) => &self.hsv_f_relative_to_background,
+            ColorComponents::DeltaHsvf(_, _, _) => &self.hsv_f_relative_to_background,
             ColorComponents::Rgbaf(_, _, _, _) => unreachable!(),
             ColorComponents::Rgbad(_, _, _, _) => unreachable!(),
             ColorComponents::RefAndAdjust(_, _, _, _) => &self.ref_hsv_f,

@@ -1,50 +1,27 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
-    fs::File,
-    io::{BufReader, Read},
-    path::Path,
-    str::FromStr,
+    collections::{BTreeMap, HashSet, VecDeque},
     sync::{
-        mpsc::{self, Receiver, Sender},
+        mpsc::{self, Receiver},
         Arc,
     },
 };
 
-use anyhow::anyhow;
 use eframe::{
-    egui::{
-        self, ecolor::HexColor, CentralPanel, Context, Frame, Layout, Margin, ScrollArea, Sense,
-        Vec2,
-    },
-    epaint::Hsva,
-    wgpu::wgc::command,
+    egui::{self, CentralPanel, Context, Frame, Vec2},
     App,
 };
 use egui_file_dialog::FileDialog;
-use krakatau2::{
-    file_output_util::Writer,
-    lib::{classfile, ParserOptions},
-    zip,
-};
-use tracing::debug;
+use krakatau2::zip;
 
 use crate::{
-    exchange::BerikaiTheme,
-    extract_general_goodies,
-    patching::patch_class,
-    reasm, replace_named_color,
-    types::{
-        AbsoluteColor, CompositingMode, CucumberBitwigTheme, NamedColor, StageProgress,
-        ThemeLoadingEvent,
-    },
+    types::{CucumberBitwigTheme, NamedColor, StageProgress, ThemeOperation, ThemeProcessingEvent},
     ui::{
         central_panel::central_panel,
-        commands::{command_channel, CommandReceiver, CommandSender, ScopeCommand},
+        commands::{command_channel, CommandReceiver, CommandSender},
         left_panel::left_panel,
         notifier::UiNotifier,
         status_bar::{status_bar, Progress, StatusBar},
     },
-    ColorComponents,
 };
 
 mod central_panel;
@@ -88,19 +65,16 @@ pub enum Event {
 
 #[derive(Debug)]
 pub enum ProgressEvent {
-    ThemeLoading(ThemeLoadingEvent),
-    ThemeWriting(ThemeWritingEvent),
+    ThemeOperation {
+        event: ThemeProcessingEvent,
+        operation: ThemeOperation,
+    },
     Text(String),
-}
-
-#[derive(Debug)]
-pub enum ThemeWritingEvent {
-    Done,
 }
 
 fn load_theme_from_jar(
     jar_in: String,
-    report_progress: impl FnMut(ThemeLoadingEvent),
+    report_progress: impl FnMut(ThemeProcessingEvent),
 ) -> anyhow::Result<CucumberBitwigTheme> {
     let file = std::fs::File::open(jar_in)?;
     let mut zip = zip::ZipArchive::new(file)?;
@@ -127,8 +101,11 @@ impl MyApp {
 
             let notifier = notifier.clone();
             std::thread::spawn(move || {
-                let theme = load_theme_from_jar(jar_in, |prog| {
-                    notifier.notify(Event::Progress(ProgressEvent::ThemeLoading(prog)));
+                let theme = load_theme_from_jar(jar_in, |event| {
+                    notifier.notify(Event::Progress(ProgressEvent::ThemeOperation {
+                        event,
+                        operation: ThemeOperation::LoadingFromJar,
+                    }));
                 })
                 .unwrap();
 
@@ -187,24 +164,28 @@ impl MyApp {
                     self.theme = Some(theme);
                 }
                 Event::Progress(progress_event) => match progress_event {
-                    ProgressEvent::ThemeLoading(theme_loading_event) => {
-                        match theme_loading_event.progress {
-                            StageProgress::Unknown => {
-                                self.status_bar.progress =
-                                    Some(Progress::new(theme_loading_event.stage.as_str(), None));
-                            }
-                            StageProgress::Percentage(value) => {
-                                self.status_bar.progress = Some(Progress::new(
-                                    theme_loading_event.stage.as_str(),
-                                    Some(value),
-                                ));
-                            }
-                            StageProgress::Done => {
-                                self.status_bar.progress = None;
-                            }
+                    ProgressEvent::ThemeOperation {
+                        event: theme_loading_event,
+                        operation,
+                    } => match theme_loading_event.progress {
+                        StageProgress::Unknown => {
+                            self.status_bar.progress = Some(Progress::new(
+                                operation.as_str(),
+                                theme_loading_event.stage.as_str(),
+                                None,
+                            ));
                         }
-                    }
-                    ProgressEvent::ThemeWriting(theme_writing_event) => todo!(),
+                        StageProgress::Percentage(value) => {
+                            self.status_bar.progress = Some(Progress::new(
+                                operation.as_str(),
+                                theme_loading_event.stage.as_str(),
+                                Some(value),
+                            ));
+                        }
+                        StageProgress::Done => {
+                            self.status_bar.progress = None;
+                        }
+                    },
                     ProgressEvent::Text(text_event) => {
                         if self.log.len() == self.log.capacity() {
                             self.log.pop_front();
@@ -240,7 +221,7 @@ impl App for MyApp {
                 ..Default::default()
             })
             .show_animated(ctx, self.panels_state.show_left_panel, |ui| {
-                left_panel(ui, &self.theme, &mut self.selected_color);
+                left_panel(ui, self.theme.as_mut(), &mut self.selected_color);
             });
 
         CentralPanel::default().frame(frame).show(ctx, |ui| {

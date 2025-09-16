@@ -9,7 +9,7 @@ default-run = "main"
 anyhow = "1.0.72"
 clap = { version = "4.5.21", features = ["derive"] }
 colored = "2.1.0"
-colorsys = "0.6.7"
+colorsys = "0.7.1"
 eframe = "0.32.3"
 # eframe = { git = "ssh://git@github.com/bircni/egui.git", rev = "d1ca8ec0cd9bf4974f0ba11bbb4a8f03d951c8f3" }
 # eframe = { path = "../../egui/crates/eframe" }

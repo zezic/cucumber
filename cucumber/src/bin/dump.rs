@@ -9,7 +9,7 @@ use cucumber::{
     types::{AbsoluteColor, ColorConst, CucumberBitwigTheme, NamedColor, UiTarget},
 };
 use krakatau2::zip;
-use tracing::debug;
+use tracing::{debug, warn};
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = env::args().collect();
@@ -33,13 +33,20 @@ fn main() -> anyhow::Result<()> {
         .collect();
 
     for color in general_goodies.named_colors {
-        let (h, s, v) = color.components.to_hsv(&known_colors);
         let a = color.components.alpha().unwrap_or(255);
+        let Some((r, g, b)) = color.components.to_rgb(&known_colors) else {
+            // TODO: Implement conversion to RGB for any color
+            warn!(
+                "Skipping color {} because it cannot be converted to RGB",
+                color.color_name
+            );
+            continue;
+        };
         let named_color = NamedColor::Absolute(AbsoluteColor {
-            h,
-            s,
-            v,
-            a: a as f32 / 255.0,
+            r,
+            g,
+            b,
+            a,
             compositing_mode: color.compositing_mode,
         });
         theme

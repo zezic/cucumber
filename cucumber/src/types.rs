@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use krakatau2::zip::ZipArchive;
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 use crate::extract_general_goodies;
 
@@ -13,10 +14,10 @@ pub enum NamedColor {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AbsoluteColor {
-    pub h: f32,
-    pub s: f32,
-    pub v: f32,
-    pub a: f32,
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+    pub a: u8,
     pub compositing_mode: Option<CompositingMode>,
 }
 
@@ -85,9 +86,26 @@ impl ColorConst {
 }
 
 #[derive(Debug)]
-pub struct ThemeLoadingEvent {
+pub struct ThemeProcessingEvent {
     pub stage: Stage,
     pub progress: StageProgress,
+}
+
+#[derive(Debug)]
+pub enum ThemeOperation {
+    LoadingFromJar,
+    ExtractingTheme,
+    WritingToJar,
+}
+
+impl ThemeOperation {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ThemeOperation::LoadingFromJar => "Loading from JAR",
+            ThemeOperation::ExtractingTheme => "Extracting Theme",
+            ThemeOperation::WritingToJar => "Writing to JAR",
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -97,6 +115,7 @@ pub enum Stage {
     SearchingColorDefinitions,
     ExtractingGeneralGoodies,
     ExtractingTheme,
+    WritingTheme,
 }
 
 impl Stage {
@@ -107,13 +126,14 @@ impl Stage {
             Stage::SearchingColorDefinitions => "Searching Color Definitions",
             Stage::ExtractingGeneralGoodies => "Extracting General Goodies",
             Stage::ExtractingTheme => "Extracting Theme",
+            Stage::WritingTheme => "Writing Theme",
         }
     }
 }
 
-impl From<Stage> for ThemeLoadingEvent {
+impl From<Stage> for ThemeProcessingEvent {
     fn from(value: Stage) -> Self {
-        ThemeLoadingEvent {
+        ThemeProcessingEvent {
             stage: value,
             progress: StageProgress::Unknown,
         }
@@ -137,7 +157,7 @@ pub struct CucumberBitwigTheme {
 impl CucumberBitwigTheme {
     pub fn from_jar<R: std::io::Read + std::io::Seek>(
         zip: &mut ZipArchive<R>,
-        report_progress: impl FnMut(ThemeLoadingEvent),
+        report_progress: impl FnMut(ThemeProcessingEvent),
     ) -> Self {
         let general_goodies = extract_general_goodies(zip, report_progress).unwrap();
 
@@ -153,13 +173,16 @@ impl CucumberBitwigTheme {
             .collect();
 
         for color in general_goodies.named_colors {
-            let (h, s, v) = color.components.to_hsv(&known_colors);
+            let Some((r, g, b)) = color.components.to_rgb(&known_colors) else {
+                warn!("Unsupported color: {:?}", color);
+                continue;
+            };
             let a = color.components.alpha().unwrap_or(255);
             let named_color = NamedColor::Absolute(AbsoluteColor {
-                h,
-                s,
-                v,
-                a: a as f32 / 255.0,
+                r,
+                g,
+                b,
+                a,
                 compositing_mode: color.compositing_mode,
             });
             theme

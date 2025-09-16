@@ -2,7 +2,7 @@ use std::{collections::HashMap, io::Read, path::Path};
 
 use anyhow::anyhow;
 
-use eframe::epaint::Hsva;
+use eframe::{epaint::Hsva, WebGlContextOption};
 use krakatau2::{
     file_output_util::Writer,
     lib::{classfile, ParserOptions},
@@ -14,8 +14,10 @@ use crate::{
     extract_general_goodies,
     patching::patch_class,
     reasm, replace_named_color,
-    types::{CompositingMode, CucumberBitwigTheme, NamedColor},
-    ui::ThemeWritingEvent,
+    types::{
+        CompositingMode, CucumberBitwigTheme, NamedColor, Stage, StageProgress,
+        ThemeProcessingEvent,
+    },
     ColorComponents,
 };
 
@@ -23,8 +25,13 @@ pub fn write_theme_to_jar(
     jar_in: String,
     jar_out: String,
     theme: CucumberBitwigTheme,
-    mut report_progress: impl FnMut(ThemeWritingEvent),
+    mut report_progress: impl FnMut(ThemeProcessingEvent),
 ) -> anyhow::Result<()> {
+    report_progress(ThemeProcessingEvent {
+        stage: Stage::WritingTheme,
+        progress: StageProgress::Unknown,
+    });
+
     let file = std::fs::File::open(jar_in)?;
     let mut zip = zip::ZipArchive::new(file)?;
 
@@ -67,22 +74,27 @@ pub fn write_theme_to_jar(
         )
         .map_err(|err| anyhow!("Parse: {:?}", err))?;
 
-        if let Some(NamedColor::Absolute(repl)) = theme.named_colors.get(&clr.color_name) {
-            let [r, g, b, a] = Hsva::new(repl.h, repl.s, repl.v, repl.a).to_srgba_unmultiplied();
+        if let Some(NamedColor::Absolute(absolute_color)) = theme.named_colors.get(&clr.color_name)
+        {
+            if absolute_color.compositing_mode.is_some() {
+                // TODO: Detach compositing mode from absolute colors, it meant to be used with relative colors
+                warn!("Compositing mode is not implemented for absolute colors");
+                continue;
+            }
+            let new_value = ColorComponents::Rgbai(
+                absolute_color.r,
+                absolute_color.g,
+                absolute_color.b,
+                absolute_color.a,
+            );
 
-            let new_value = match repl.compositing_mode {
-                Some(CompositingMode::RelativeToBackground) => {
-                    ColorComponents::Hsvf(repl.h, repl.s, repl.v)
-                }
-                _ => ColorComponents::Rgbai(r, g, b, a),
-            };
             if replace_named_color(
                 &mut class,
                 &clr.color_name,
                 new_value,
                 &mut general_goodies.named_colors,
                 &general_goodies.palette_color_methods,
-                repl.compositing_mode.clone(),
+                absolute_color.compositing_mode.clone(),
             )
             .is_none()
             {
@@ -111,7 +123,10 @@ pub fn write_theme_to_jar(
 
         writer.write(Some(&name), &buffer)?;
     }
-    report_progress(ThemeWritingEvent::Done);
+    report_progress(ThemeProcessingEvent {
+        stage: Stage::WritingTheme,
+        progress: StageProgress::Done,
+    });
 
     Ok(())
 }
