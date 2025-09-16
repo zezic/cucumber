@@ -17,16 +17,13 @@ use crate::{
     extract_general_goodies,
     patching::patch_class,
     reasm, replace_named_color,
-    types::{
-        CompositingMode, CucumberBitwigTheme, NamedColor, Stage, StageProgress,
-        ThemeProcessingEvent,
-    },
+    types::{CompositingMode, NamedColor, Stage, StageProgress, ThemeProcessingEvent},
     ColorComponents,
 };
 
 pub fn write_theme_to_jar(
-    jar_in: String,
-    jar_out: String,
+    jar_in: impl AsRef<Path>,
+    jar_out: impl AsRef<Path>,
     changed_colors: BTreeMap<String, NamedColor>,
     mut report_progress: impl FnMut(ThemeProcessingEvent),
 ) -> anyhow::Result<()> {
@@ -115,7 +112,7 @@ pub fn write_theme_to_jar(
         patched_classes.insert(file_name_w_ext, new_buffer);
     }
 
-    let mut writer = Writer::new(Path::new(&jar_out))?;
+    let mut writer = Writer::new(jar_out.as_ref())?;
 
     for i in 0..zip.len() {
         let mut file = zip.by_index(i)?;

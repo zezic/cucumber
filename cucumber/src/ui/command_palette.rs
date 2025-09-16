@@ -99,8 +99,8 @@ impl CommandPalette {
         let mut num_alternatives: usize = 0;
         let mut selected_command = None;
 
-        for (i, fuzzy_match) in commands_that_match(&query).iter().enumerate() {
-            let command = fuzzy_match.command;
+        for (i, fuzzy_match) in commands_that_match(&query).into_iter().enumerate() {
+            let command = fuzzy_match.command.clone();
             let kb_shortcut_text = command.formatted_kb_shortcut(ui.ctx()).unwrap_or_default();
 
             let padding = 8.0;
@@ -113,7 +113,7 @@ impl CommandPalette {
             let response = response.on_hover_text(command.tooltip());
 
             if response.clicked() {
-                selected_command = Some(command);
+                selected_command = Some(command.clone());
             }
 
             let selected = i == self.selected_alternative;
@@ -135,7 +135,7 @@ impl CommandPalette {
                 }
             }
 
-            let text = format_match(fuzzy_match, &font_id, style.text_color());
+            let text = format_match(&fuzzy_match, &font_id, style.text_color());
 
             // TODO(emilk): shorten long text using '…'
             let galley = text.into_galley(

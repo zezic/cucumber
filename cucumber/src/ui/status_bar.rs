@@ -25,7 +25,7 @@ pub fn status_bar(ui: &mut egui::Ui, status_bar: &StatusBar) {
         ui.separator();
         if let Some(progress) = &status_bar.progress {
             ui.weak(progress.group);
-            ui.small_icon(&re_ui::icons::ARROW_RIGHT, None);
+            ui.small_icon(&re_ui::icons::BREADCRUMBS_SEPARATOR, None);
             ui.strong(progress.name);
 
             if let Some(value) = progress.value {
@@ -40,6 +40,8 @@ pub fn status_bar(ui: &mut egui::Ui, status_bar: &StatusBar) {
             } else {
                 ui.add(Spinner::new().size(ui.available_height() * 0.8));
             }
+        } else {
+            ui.weak("Ready");
         }
     });
 }

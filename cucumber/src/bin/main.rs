@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use clap::Parser;
 
 use cucumber::ui::MyApp;
@@ -9,10 +11,10 @@ pub const APP_ID: &str = "cucumber";
 #[command(version, about, long_about = None)]
 struct Args {
     /// Input JAR
-    jar_in: Option<String>,
+    jar_in: Option<PathBuf>,
 
     /// Output JAR
-    jar_out: Option<String>,
+    jar_out: Option<PathBuf>,
 }
 
 // When compiling natively:

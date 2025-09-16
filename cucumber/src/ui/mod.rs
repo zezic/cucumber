@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, HashSet, VecDeque},
     mem,
+    path::{Path, PathBuf},
     sync::{
         mpsc::{self, Receiver},
         Arc,
@@ -13,6 +14,7 @@ use eframe::{
 };
 use egui_file_dialog::FileDialog;
 use krakatau2::zip;
+use re_ui::notifications::NotificationUi;
 use tracing::error;
 
 use crate::{
@@ -23,8 +25,10 @@ use crate::{
         commands::{
             command_channel, CommandReceiver, CommandSender, CucumberCommand, CucumberCommandSender,
         },
+        drag_n_drop::handle_dropping_files,
         left_panel::left_panel,
         notifier::UiNotifier,
+        right_panel::right_panel,
         status_bar::{status_bar, Progress, StatusBar},
     },
     writing::write_theme_to_jar,
@@ -33,6 +37,7 @@ use crate::{
 mod central_panel;
 mod command_palette;
 mod commands;
+mod drag_n_drop;
 mod left_panel;
 pub mod notifier;
 mod right_panel;
@@ -40,8 +45,8 @@ mod status_bar;
 mod top_bar;
 
 pub struct MyApp {
-    jar_in: String,
-    jar_out: Option<String>,
+    jar_in: PathBuf,
+    jar_out: Option<PathBuf>,
     log: VecDeque<String>,
     theme: Option<CucumberBitwigTheme>,
     selected_color: Option<String>,
@@ -55,6 +60,7 @@ pub struct MyApp {
     command_receiver: CommandReceiver,
     status_bar: StatusBar,
     command_palette: CommandPalette,
+    notifications: NotificationUi,
 }
 
 struct PanelsState {
@@ -78,7 +84,7 @@ pub enum ProgressEvent {
 }
 
 fn load_theme_from_jar(
-    jar_in: String,
+    jar_in: impl AsRef<Path>,
     report_progress: impl FnMut(ThemeProcessingEvent),
 ) -> anyhow::Result<CucumberBitwigTheme> {
     let file = std::fs::File::open(jar_in)?;
@@ -89,8 +95,8 @@ fn load_theme_from_jar(
 impl MyApp {
     pub fn new(
         ctx: Context,
-        jar_in: Option<String>,
-        jar_out: Option<String>,
+        jar_in: Option<PathBuf>,
+        jar_out: Option<PathBuf>,
     ) -> anyhow::Result<Self> {
         re_ui::apply_style_and_install_loaders(&ctx);
 
@@ -99,7 +105,7 @@ impl MyApp {
 
         let (event_tx, event_rx) = mpsc::channel();
 
-        let notifier = UiNotifier::new(ctx, event_tx);
+        let notifier = UiNotifier::new(ctx.clone(), event_tx);
 
         {
             let jar_in = jar_in.clone();
@@ -127,7 +133,7 @@ impl MyApp {
             Arc::new(|path| path.to_string_lossy().to_lowercase().ends_with("json")),
         );
 
-        let (command_sender, command_receiver) = command_channel();
+        let (command_sender, command_receiver) = command_channel(ctx.clone());
 
         Ok(Self {
             jar_in,
@@ -149,6 +155,7 @@ impl MyApp {
             command_receiver,
             status_bar: StatusBar::default(),
             command_palette: CommandPalette::default(),
+            notifications: NotificationUi::new(ctx),
         })
     }
 
@@ -168,26 +175,28 @@ impl MyApp {
                     self.theme = Some(theme);
                 }
                 Event::Progress(progress_event) => match progress_event {
-                    ProgressEvent::ThemeOperation {
-                        event: theme_loading_event,
-                        operation,
-                    } => match theme_loading_event.progress {
+                    ProgressEvent::ThemeOperation { event, operation } => match event.progress {
                         StageProgress::Unknown => {
                             self.status_bar.progress = Some(Progress::new(
                                 operation.as_str(),
-                                theme_loading_event.stage.as_str(),
+                                event.stage.as_str(),
                                 None,
                             ));
                         }
                         StageProgress::Percentage(value) => {
                             self.status_bar.progress = Some(Progress::new(
                                 operation.as_str(),
-                                theme_loading_event.stage.as_str(),
+                                event.stage.as_str(),
                                 Some(value),
                             ));
                         }
                         StageProgress::Done => {
                             self.status_bar.progress = None;
+                            self.notifications.success(format!(
+                                "{}: {}",
+                                operation.as_str(),
+                                event.stage.as_str()
+                            ));
                         }
                     },
                     ProgressEvent::Text(text_event) => {
@@ -229,6 +238,30 @@ impl MyApp {
                 CucumberCommand::ZoomReset => {
                     ctx.set_zoom_factor(1.0);
                 }
+                CucumberCommand::LoadJar(pathbuf) => {
+                    if let Some(pathbuf) = pathbuf {
+                        self.jar_in = pathbuf.clone();
+                        let notifier = self.notifier.clone();
+                        let jar_in = pathbuf;
+                        std::thread::spawn(move || {
+                            let theme = load_theme_from_jar(jar_in, |event| {
+                                notifier.notify(Event::Progress(ProgressEvent::ThemeOperation {
+                                    event,
+                                    operation: ThemeOperation::LoadingFromJar,
+                                }));
+                            })
+                            .unwrap();
+
+                            let mut changed_colors = HashSet::new();
+                            for (name, _color) in &theme.named_colors {
+                                changed_colors.insert(name.clone());
+                            }
+                            notifier.notify(Event::JarParsed { theme });
+                        });
+                    } else {
+                        todo!("Show file picker")
+                    }
+                }
                 CucumberCommand::SaveJar => {
                     if !self.is_dirty() {
                         continue;
@@ -262,26 +295,26 @@ impl MyApp {
 }
 
 impl App for MyApp {
-    fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
-        if let Some(cmd) = CucumberCommand::listen_for_kb_shortcut(ctx) {
+    fn update(&mut self, egui_ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
+        if let Some(cmd) = CucumberCommand::listen_for_kb_shortcut(egui_ctx) {
             self.command_sender.send_ui(cmd);
         }
 
         self.handle_events();
-        self.handle_commands(ctx);
+        self.handle_commands(egui_ctx);
 
-        let frame = Frame::central_panel(&ctx.style());
+        let frame = Frame::central_panel(&egui_ctx.style());
 
         top_bar::top_bar(
             &self.command_sender,
             &mut self.panels_state,
-            ctx,
+            egui_ctx,
             &self.status_bar.progress,
             self.changed_colors.len(),
         );
 
         egui::TopBottomPanel::bottom("bottom_panel").show_animated(
-            ctx,
+            egui_ctx,
             self.panels_state.show_bottom_panel,
             |ui| {
                 status_bar(ui, &self.status_bar);
@@ -291,10 +324,10 @@ impl App for MyApp {
         egui::SidePanel::left("left_panel")
             .min_width(270.0)
             .frame(egui::Frame {
-                fill: ctx.style().visuals.panel_fill,
+                fill: egui_ctx.style().visuals.panel_fill,
                 ..Default::default()
             })
-            .show_animated(ctx, self.panels_state.show_left_panel, |ui| {
+            .show_animated(egui_ctx, self.panels_state.show_left_panel, |ui| {
                 left_panel(
                     ui,
                     self.theme.as_mut(),
@@ -303,12 +336,26 @@ impl App for MyApp {
                 );
             });
 
-        CentralPanel::default().frame(frame).show(ctx, |ui| {
+        egui::SidePanel::right("right_panel")
+            .min_width(270.0)
+            .frame(egui::Frame {
+                fill: egui_ctx.style().visuals.panel_fill,
+                ..Default::default()
+            })
+            .show_animated(egui_ctx, self.panels_state.show_right_panel, |ui| {
+                right_panel(ui);
+            });
+
+        CentralPanel::default().frame(frame).show(egui_ctx, |ui| {
             central_panel(ui);
         });
 
-        if let Some(command) = self.command_palette.show(ctx) {
+        if let Some(command) = self.command_palette.show(egui_ctx) {
             self.command_sender.send_ui(command);
         }
+
+        self.notifications.show_toasts(egui_ctx);
+
+        handle_dropping_files(egui_ctx, &self.command_sender);
     }
 }

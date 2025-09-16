@@ -40,7 +40,7 @@ pub fn left_panel(
 
     if let Some(theme) = &theme {
         egui::ScrollArea::vertical()
-            .id_salt("layout_scroll")
+            .id_salt("palette_scroll")
             .auto_shrink([false, false])
             .max_height(scroll_height)
             .show(ui, |ui| {

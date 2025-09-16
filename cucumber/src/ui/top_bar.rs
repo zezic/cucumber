@@ -1,5 +1,9 @@
-use eframe::egui;
-use re_ui::{ContextExt, UiExt};
+use eframe::egui::{
+    self,
+    containers::menu::{MenuButton, MenuConfig},
+    Button, ScrollArea,
+};
+use re_ui::{menu::menu_style, ContextExt, UiExt};
 
 use crate::ui::{
     commands::{CommandSender, CucumberCommand, CucumberCommandSender},
@@ -41,8 +45,27 @@ pub fn top_bar(
             ui.set_height(top_bar_style.height);
             ui.add_space(top_bar_style.indent);
 
-            ui.menu_button("File", |ui| file_menu(ui, command_sender));
-            ui.menu_button("View", |ui| view_menu(ui, command_sender));
+            MenuButton::from_button(Button::new("File"))
+                .config(MenuConfig::new().style(menu_style()))
+                .ui(ui, |ui| {
+                    ui.set_max_height(ui.ctx().screen_rect().height());
+                    ScrollArea::vertical()
+                        .max_height(ui.ctx().screen_rect().height() - 16.0)
+                        .show(ui, |ui| {
+                            file_menu(ui, command_sender, changes);
+                        });
+                });
+
+            MenuButton::from_button(Button::new("View"))
+                .config(MenuConfig::new().style(menu_style()))
+                .ui(ui, |ui| {
+                    ui.set_max_height(ui.ctx().screen_rect().height());
+                    ScrollArea::vertical()
+                        .max_height(ui.ctx().screen_rect().height() - 16.0)
+                        .show(ui, |ui| {
+                            view_menu(ui, command_sender);
+                        });
+                });
 
             ui.separator();
 
@@ -98,13 +121,17 @@ fn top_bar_ui(mini_state: &mut PanelsState, ui: &mut egui::Ui) {
     });
 }
 
-fn file_menu(ui: &mut egui::Ui, command_sender: &CommandSender) {
-    CucumberCommand::SaveJar.menu_button_ui(ui, command_sender);
+fn file_menu(ui: &mut egui::Ui, command_sender: &CommandSender, changes: usize) {
+    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+
+    CucumberCommand::SaveJar.enabled_menu_button_ui(ui, command_sender, changes > 0);
     ui.separator();
     CucumberCommand::Quit.menu_button_ui(ui, command_sender);
 }
 
 fn view_menu(ui: &mut egui::Ui, command_sender: &CommandSender) {
+    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+
     CucumberCommand::ToggleCommandPalette.menu_button_ui(ui, command_sender);
     ui.separator();
     CucumberCommand::ZoomIn.menu_button_ui(ui, command_sender);

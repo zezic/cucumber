@@ -1,3 +1,5 @@
+use std::{path::PathBuf, sync::mpsc::Sender};
+
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers};
 use re_ui::ContextExt;
 use smallvec::{smallvec, SmallVec};
@@ -12,7 +14,7 @@ pub trait CucumberCommandSender {
 /// Most are available in the GUI,
 /// some have keyboard shortcuts,
 /// and all are visible in the [`crate::CommandPalette`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, strum_macros::EnumIter)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, strum_macros::EnumIter)]
 pub enum CucumberCommand {
     Quit,
     ToggleTheme,
@@ -22,19 +24,20 @@ pub enum CucumberCommand {
     ZoomOut,
     ZoomReset,
 
+    LoadJar(Option<PathBuf>),
     SaveJar,
 }
 
 impl CucumberCommand {
-    pub fn text(self) -> &'static str {
+    pub fn text(&self) -> &'static str {
         self.text_and_tooltip().0
     }
 
-    pub fn tooltip(self) -> &'static str {
+    pub fn tooltip(&self) -> &'static str {
         self.text_and_tooltip().1
     }
 
-    pub fn text_and_tooltip(self) -> (&'static str, &'static str) {
+    pub fn text_and_tooltip(&self) -> (&'static str, &'static str) {
         match self {
             Self::Quit => ("Quit", "Close the Rerun Viewer"),
 
@@ -48,12 +51,13 @@ impl CucumberCommand {
 
             Self::ToggleCommandPalette => ("Command palette…", "Toggle the Command Palette"),
 
+            Self::LoadJar(..) => ("Load JAR", "Load a JAR file"),
             Self::SaveJar => ("Save JAR", "Save the current workspace to a JAR file"),
         }
     }
 
     /// All keyboard shortcuts, with the primary first.
-    pub fn kb_shortcuts(self) -> SmallVec<[KeyboardShortcut; 2]> {
+    pub fn kb_shortcuts(&self) -> SmallVec<[KeyboardShortcut; 2]> {
         fn key(key: Key) -> KeyboardShortcut {
             KeyboardShortcut::new(Modifiers::NONE, key)
         }
@@ -87,7 +91,7 @@ impl CucumberCommand {
             KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, key)
         }
 
-        match self {
+        match &self {
             #[cfg(target_os = "windows")]
             Self::Quit => smallvec![KeyboardShortcut::new(Modifiers::ALT, Key::F4)],
 
@@ -102,27 +106,35 @@ impl CucumberCommand {
             Self::ZoomOut => smallvec![egui::gui_zoom::kb_shortcuts::ZOOM_OUT],
             Self::ZoomReset => smallvec![egui::gui_zoom::kb_shortcuts::ZOOM_RESET],
 
+            Self::LoadJar(..) => smallvec![cmd(Key::O)],
             Self::SaveJar => smallvec![cmd(Key::S)],
         }
     }
 
     /// Primary keyboard shortcut
-    pub fn primary_kb_shortcut(self) -> Option<KeyboardShortcut> {
+    pub fn primary_kb_shortcut(&self) -> Option<KeyboardShortcut> {
         self.kb_shortcuts().first().copied()
     }
 
     /// Return the keyboard shortcut for this command, nicely formatted
     // TODO(emilk): use Help/IconText instead
-    pub fn formatted_kb_shortcut(self, egui_ctx: &egui::Context) -> Option<String> {
+    pub fn formatted_kb_shortcut(&self, egui_ctx: &egui::Context) -> Option<String> {
         // Note: we only show the primary shortcut to the user.
         // The fallbacks are there for people who have muscle memory for the other shortcuts.
         self.primary_kb_shortcut()
             .map(|shortcut| egui_ctx.format_shortcut(&shortcut))
     }
 
-    pub fn icon(self) -> Option<&'static re_ui::Icon> {
+    pub fn icon(&self) -> Option<&'static re_ui::Icon> {
         match self {
-            _ => None,
+            CucumberCommand::Quit => Some(&re_ui::icons::CLOSE),
+            CucumberCommand::ToggleTheme => None,
+            CucumberCommand::ToggleCommandPalette => None,
+            CucumberCommand::ZoomIn => None,
+            CucumberCommand::ZoomOut => None,
+            CucumberCommand::ZoomReset => None,
+            CucumberCommand::LoadJar(..) => Some(&re_ui::icons::DATA_SOURCE),
+            CucumberCommand::SaveJar => Some(&re_ui::icons::DOWNLOAD),
         }
     }
 
@@ -135,13 +147,14 @@ impl CucumberCommand {
             return None; // e.g. we're typing in a TextField
         }
 
-        let mut commands: Vec<(KeyboardShortcut, Self)> = Self::iter()
-            .flat_map(|cmd| {
-                cmd.kb_shortcuts()
-                    .into_iter()
-                    .map(move |kb_shortcut| (kb_shortcut, cmd))
-            })
-            .collect();
+        let mut commands: Vec<(KeyboardShortcut, Self)> = Vec::new();
+
+        for cmd in Self::iter() {
+            let shortcuts = cmd.kb_shortcuts();
+            for kb_shortcut in shortcuts {
+                commands.push((kb_shortcut, cmd.clone()));
+            }
+        }
 
         // If the user pressed `Cmd-Shift-S` then egui will match that
         // with both `Cmd-Shift-S` and `Cmd-S`.
@@ -174,8 +187,28 @@ impl CucumberCommand {
         ui: &mut egui::Ui,
         command_sender: &impl CucumberCommandSender,
     ) -> egui::Response {
+        self.menu_button_ui_impl(ui, command_sender, true)
+    }
+
+    pub fn enabled_menu_button_ui(
+        self,
+        ui: &mut egui::Ui,
+        command_sender: &impl CucumberCommandSender,
+        enabled: bool,
+    ) -> egui::Response {
+        self.menu_button_ui_impl(ui, command_sender, enabled)
+    }
+
+    fn menu_button_ui_impl(
+        self,
+        ui: &mut egui::Ui,
+        command_sender: &impl CucumberCommandSender,
+        enabled: bool,
+    ) -> egui::Response {
         let button = self.menu_button(ui.ctx());
-        let response = ui.add(button).on_hover_text(self.tooltip());
+        let response = ui
+            .add_enabled(enabled, button)
+            .on_hover_text(self.tooltip());
 
         if response.clicked() {
             command_sender.send_ui(self);
@@ -185,7 +218,9 @@ impl CucumberCommand {
         response
     }
 
-    pub fn menu_button(self, egui_ctx: &egui::Context) -> egui::Button<'static> {
+    /// Show this command as a menu-button.
+    ///
+    pub fn menu_button(&self, egui_ctx: &egui::Context) -> egui::Button<'static> {
         let tokens = egui_ctx.tokens();
 
         let mut button = if let Some(icon) = self.icon() {
@@ -268,13 +303,17 @@ fn check_for_clashing_command_shortcuts() {
 
 /// Sender that queues up the execution of a command.
 #[derive(Clone)]
-pub struct CommandSender(std::sync::mpsc::Sender<CucumberCommand>);
+pub struct CommandSender {
+    sender: Sender<CucumberCommand>,
+    ctx: egui::Context,
+}
 
 impl CucumberCommandSender for CommandSender {
     /// Send a command to be executed.
     fn send_ui(&self, command: CucumberCommand) {
         // The only way this can fail is if the receiver has been dropped.
-        self.0.send(command).ok();
+        self.sender.send(command).ok();
+        self.ctx.request_repaint();
     }
 }
 
@@ -291,7 +330,7 @@ impl CommandReceiver {
 }
 
 /// Creates a new command channel.
-pub fn command_channel() -> (CommandSender, CommandReceiver) {
+pub fn command_channel(ctx: egui::Context) -> (CommandSender, CommandReceiver) {
     let (sender, receiver) = std::sync::mpsc::channel();
-    (CommandSender(sender), CommandReceiver(receiver))
+    (CommandSender { sender, ctx }, CommandReceiver(receiver))
 }
