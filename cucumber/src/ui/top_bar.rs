@@ -13,7 +13,7 @@ pub fn top_bar(
 
     egui::TopBottomPanel::top("top_bar").show(egui_ctx, |ui| {
         #[cfg(not(target_arch = "wasm32"))]
-        if !re_ui::native_window_bar(OperatingSystem::Mac) {
+        if !re_ui::native_window_bar(eframe::egui::os::OperatingSystem::default()) {
             // Interact with background first, so that buttons in the top bar gets input priority
             // (last added widget has priority for input).
             let title_bar_response = ui.interact(

@@ -2,6 +2,8 @@ use clap::Parser;
 
 use cucumber::ui::MyApp;
 
+pub const APP_ID: &str = "cucumber";
+
 /// Bitwig theme editor GUI
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -23,12 +25,7 @@ fn main() -> eframe::Result {
 
     let args = Args::parse();
 
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1200.0, 720.0])
-            .with_position([400.0, 150.0]),
-        ..Default::default()
-    };
+    let options = eframe_options();
     eframe::run_native(
         "Cucumber",
         options,
@@ -40,50 +37,55 @@ fn main() -> eframe::Result {
     )
 }
 
-// When compiling to web using trunk:
-#[cfg(target_arch = "wasm32")]
-fn main() {
-    use eframe::wasm_bindgen::JsCast as _;
+pub fn eframe_options() -> eframe::NativeOptions {
+    let os = eframe::egui::os::OperatingSystem::default();
+    eframe::NativeOptions {
+        viewport: eframe::egui::ViewportBuilder::default()
+            .with_app_id(APP_ID) // Controls where on disk the app state is persisted
+            .with_decorations(!re_ui::CUSTOM_WINDOW_DECORATIONS) // Maybe hide the OS-specific "chrome" around the window
+            .with_fullsize_content_view(re_ui::fullsize_content(os))
+            .with_icon(icon_data())
+            .with_inner_size([1200.0, 720.0])
+            .with_min_inner_size([320.0, 450.0]) // Should be high enough to fit the rerun menu
+            .with_title_shown(!re_ui::fullsize_content(os))
+            .with_titlebar_buttons_shown(!re_ui::CUSTOM_WINDOW_DECORATIONS)
+            .with_titlebar_shown(!re_ui::fullsize_content(os))
+            .with_transparent(re_ui::CUSTOM_WINDOW_DECORATIONS), // To have rounded corners without decorations we need transparency
 
-    // Redirect `log` message to `console.log` and friends:
-    eframe::WebLogger::init(log::LevelFilter::Debug).ok();
+        renderer: eframe::Renderer::Wgpu,
+        depth_buffer: 0,
+        multisampling: 0,
 
-    let web_options = eframe::WebOptions::default();
+        ..Default::default()
+    }
+}
 
-    wasm_bindgen_futures::spawn_local(async {
-        let document = web_sys::window()
-            .expect("No window")
-            .document()
-            .expect("No document");
+#[allow(clippy::unnecessary_wraps)]
+fn icon_data() -> eframe::egui::IconData {
+    cfg_if::cfg_if! {
+        if #[cfg(target_os = "macos")] {
+            let app_icon_png_bytes = include_bytes!("../../assets/icon.png");
+        } else if #[cfg(target_os = "windows")] {
+            let app_icon_png_bytes = include_bytes!("../../assets/icon.png");
+        } else {
+            let app_icon_png_bytes = include_bytes!("../../assets/icon.png");
+        }
+    };
 
-        let canvas = document
-            .get_element_by_id("the_canvas_id")
-            .expect("Failed to find the_canvas_id")
-            .dyn_into::<web_sys::HtmlCanvasElement>()
-            .expect("the_canvas_id was not a HtmlCanvasElement");
+    // We include the .png with `include_bytes`. If that fails, things are extremely broken.
+    match eframe::icon_data::from_png_bytes(app_icon_png_bytes) {
+        Ok(icon_data) => icon_data,
+        Err(err) => {
+            #[cfg(debug_assertions)]
+            panic!("Failed to load app icon: {err}");
 
-        let start_result = eframe::WebRunner::new()
-            .start(
-                canvas,
-                web_options,
-                // Box::new(|cc| Ok(Box::new(eframe_template::TemplateApp::new(cc)))),
-                Box::new(|_| Ok(Box::new(MyApp::new(None, None)?))),
-            )
-            .await;
+            #[cfg(not(debug_assertions))]
+            {
+                use tracing::warn;
 
-        // Remove the loading text and spinner:
-        if let Some(loading_text) = document.get_element_by_id("loading_text") {
-            match start_result {
-                Ok(_) => {
-                    loading_text.remove();
-                }
-                Err(e) => {
-                    loading_text.set_inner_html(
-                        "<p> The app has crashed. See the developer console for details. </p>",
-                    );
-                    panic!("Failed to start eframe: {e:?}");
-                }
+                warn!("Failed to load app icon: {err}");
+                Default::default()
             }
         }
-    });
+    }
 }
