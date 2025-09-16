@@ -18,6 +18,7 @@ use re_ui::notifications::NotificationUi;
 use tracing::error;
 
 use crate::{
+    extract_general_goodies,
     types::{CucumberBitwigTheme, NamedColor, StageProgress, ThemeOperation, ThemeProcessingEvent},
     ui::{
         central_panel::central_panel,
@@ -32,6 +33,7 @@ use crate::{
         status_bar::{status_bar, Progress, StatusBar},
     },
     writing::write_theme_to_jar,
+    GeneralGoodies,
 };
 
 mod central_panel;
@@ -49,6 +51,7 @@ pub struct MyApp {
     jar_out: Option<PathBuf>,
     log: VecDeque<String>,
     theme: Option<CucumberBitwigTheme>,
+    general_goodies: Option<GeneralGoodies>,
     selected_color: Option<String>,
     filter: String,
     file_dialog: FileDialog,
@@ -70,7 +73,7 @@ struct PanelsState {
 }
 
 pub enum Event {
-    JarParsed { theme: CucumberBitwigTheme },
+    JarParsed { loaded_jar: LoadedJar },
     Progress(ProgressEvent),
 }
 
@@ -83,13 +86,34 @@ pub enum ProgressEvent {
     Text(String),
 }
 
-fn load_theme_from_jar(
+pub struct LoadedJar {
+    theme: CucumberBitwigTheme,
+    general_goodies: GeneralGoodies,
+}
+
+impl LoadedJar {
+    fn from_jar(
+        zip: &mut zip::ZipArchive<std::fs::File>,
+        report_progress: impl FnMut(ThemeProcessingEvent),
+    ) -> anyhow::Result<Self> {
+        let general_goodies = extract_general_goodies(zip, report_progress).unwrap();
+        let theme = CucumberBitwigTheme::from_general_goodies(&general_goodies);
+
+        Ok(LoadedJar {
+            theme,
+            general_goodies,
+        })
+    }
+}
+
+fn load_jar(
     jar_in: impl AsRef<Path>,
     report_progress: impl FnMut(ThemeProcessingEvent),
-) -> anyhow::Result<CucumberBitwigTheme> {
+) -> anyhow::Result<LoadedJar> {
     let file = std::fs::File::open(jar_in)?;
     let mut zip = zip::ZipArchive::new(file)?;
-    Ok(CucumberBitwigTheme::from_jar(&mut zip, report_progress))
+    let loaded_jar = LoadedJar::from_jar(&mut zip, report_progress)?;
+    Ok(loaded_jar)
 }
 
 impl MyApp {
@@ -112,7 +136,7 @@ impl MyApp {
 
             let notifier = notifier.clone();
             std::thread::spawn(move || {
-                let theme = load_theme_from_jar(jar_in, |event| {
+                let theme = load_jar(jar_in, |event| {
                     notifier.notify(Event::Progress(ProgressEvent::ThemeOperation {
                         event,
                         operation: ThemeOperation::LoadingFromJar,
@@ -120,11 +144,7 @@ impl MyApp {
                 })
                 .unwrap();
 
-                let mut changed_colors = HashSet::new();
-                for (name, _color) in &theme.named_colors {
-                    changed_colors.insert(name.clone());
-                }
-                notifier.notify(Event::JarParsed { theme });
+                notifier.notify(Event::JarParsed { loaded_jar: theme });
             });
         }
 
@@ -140,6 +160,7 @@ impl MyApp {
             jar_out,
             log,
             theme: None,
+            general_goodies: None,
             filter: String::new(),
             selected_color: None,
             file_dialog,
@@ -162,7 +183,13 @@ impl MyApp {
     fn handle_events(&mut self) {
         while let Ok(event) = self.event_rx.try_recv() {
             match event {
-                Event::JarParsed { theme } => {
+                Event::JarParsed {
+                    loaded_jar:
+                        LoadedJar {
+                            theme,
+                            general_goodies,
+                        },
+                } => {
                     if self.selected_color.is_none() {
                         for color in ["On", "Accent (default)"] {
                             if theme.named_colors.contains_key(color) {
@@ -173,6 +200,7 @@ impl MyApp {
                     }
 
                     self.theme = Some(theme);
+                    self.general_goodies = Some(general_goodies);
                 }
                 Event::Progress(progress_event) => match progress_event {
                     ProgressEvent::ThemeOperation { event, operation } => match event.progress {
@@ -244,7 +272,7 @@ impl MyApp {
                         let notifier = self.notifier.clone();
                         let jar_in = pathbuf;
                         std::thread::spawn(move || {
-                            let theme = load_theme_from_jar(jar_in, |event| {
+                            let loaded_jar = load_jar(jar_in, |event| {
                                 notifier.notify(Event::Progress(ProgressEvent::ThemeOperation {
                                     event,
                                     operation: ThemeOperation::LoadingFromJar,
@@ -252,11 +280,7 @@ impl MyApp {
                             })
                             .unwrap();
 
-                            let mut changed_colors = HashSet::new();
-                            for (name, _color) in &theme.named_colors {
-                                changed_colors.insert(name.clone());
-                            }
-                            notifier.notify(Event::JarParsed { theme });
+                            notifier.notify(Event::JarParsed { loaded_jar });
                         });
                     } else {
                         todo!("Show file picker")
@@ -343,7 +367,7 @@ impl App for MyApp {
                 ..Default::default()
             })
             .show_animated(egui_ctx, self.panels_state.show_right_panel, |ui| {
-                right_panel(ui);
+                right_panel(ui, &self.general_goodies);
             });
 
         CentralPanel::default().frame(frame).show(egui_ctx, |ui| {
@@ -354,7 +378,8 @@ impl App for MyApp {
             self.command_sender.send_ui(command);
         }
 
-        self.notifications.show_toasts(egui_ctx);
+        // TODO: enable this and move toasts to the right bottom
+        // self.notifications.show_toasts(egui_ctx);
 
         handle_dropping_files(egui_ctx, &self.command_sender);
     }

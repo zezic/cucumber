@@ -1,10 +1,9 @@
 use std::collections::BTreeMap;
 
-use krakatau2::zip::ZipArchive;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-use crate::extract_general_goodies;
+use crate::GeneralGoodies;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum NamedColor {
@@ -155,12 +154,7 @@ pub struct CucumberBitwigTheme {
 }
 
 impl CucumberBitwigTheme {
-    pub fn from_jar<R: std::io::Read + std::io::Seek>(
-        zip: &mut ZipArchive<R>,
-        report_progress: impl FnMut(ThemeProcessingEvent),
-    ) -> Self {
-        let general_goodies = extract_general_goodies(zip, report_progress).unwrap();
-
+    pub fn from_general_goodies(general_goodies: &GeneralGoodies) -> Self {
         let mut theme = CucumberBitwigTheme {
             name: "Extracted Theme".into(),
             ..Default::default()
@@ -172,9 +166,9 @@ impl CucumberBitwigTheme {
             .map(|color| (color.color_name.clone(), color.components.clone()))
             .collect();
 
-        for color in general_goodies.named_colors {
+        for color in &general_goodies.named_colors {
             let Some((r, g, b)) = color.components.to_rgb(&known_colors) else {
-                warn!("Unsupported color: {:?}", color);
+                warn!("Unsupported color: {:?}", color.color_name);
                 continue;
             };
             let a = color.components.alpha().unwrap_or(255);
@@ -183,15 +177,15 @@ impl CucumberBitwigTheme {
                 g,
                 b,
                 a,
-                compositing_mode: color.compositing_mode,
+                compositing_mode: color.compositing_mode.clone(),
             });
             theme
                 .named_colors
                 .insert(color.color_name.clone(), named_color);
         }
 
-        if let Some(timeline_color_ref) = general_goodies.timeline_color_ref {
-            let timeline_const_name = timeline_color_ref.const_name;
+        if let Some(timeline_color_ref) = &general_goodies.timeline_color_ref {
+            let timeline_const_name = timeline_color_ref.const_name.clone();
             let timeline_const = general_goodies
                 .raw_colors
                 .constants

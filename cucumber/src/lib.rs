@@ -37,6 +37,9 @@ const PALETTE_ANCHOR: &str = "Device Tint Future";
 // Contain time-bomb initialization around constant 5000
 const INIT_ANCHOR: &str = "Apply Device Remote Control Changes To All Devices";
 
+// Contain crash report builder where we can get some info about release version
+const CRASH_REPORT_ANCHOR: &str = "stack trace.txt";
+
 // Other color anchor
 // const OTHER_ANCHOR: &str = "Loop Region Fill";
 // const OTHER_ANCHOR_2: &str = "Cue Marker Selected Fill";
@@ -287,6 +290,7 @@ pub fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
     let mut palette_color_meths = None;
     let mut raw_color_goodies = None;
     let mut timeline_color_ref = None;
+    let mut release_metadata = None;
 
     let mut data = Vec::new();
 
@@ -323,6 +327,12 @@ pub fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
                     debug!("Found raw color: {}", file_name);
                     if let Some(goodies) = extract_raw_color_goodies(&class) {
                         raw_color_goodies = Some(goodies);
+                    }
+                }
+                UsefulFileType::CrashReport => {
+                    debug!("Found crash report: {}", file_name);
+                    if let Some(metadata) = extract_release_metadata(&class) {
+                        release_metadata = Some(metadata);
                     }
                 }
                 UsefulFileType::TimelineColorCnst {
@@ -426,17 +436,18 @@ pub fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
         palette_color_methods: palette_color_meths.unwrap(),
         raw_colors: raw_color_goodies.unwrap(),
         timeline_color_ref,
+        release_metadata: release_metadata.unwrap_or_default(),
     })
 }
 
 #[derive(Debug)]
 pub struct GeneralGoodies {
-    #[allow(dead_code)]
     pub init_class: String,
     pub named_colors: Vec<NamedColor>,
     pub palette_color_methods: PaletteColorMethods,
     pub raw_colors: RawColorGoodies,
     pub timeline_color_ref: Option<TimelineColorReference>, // Don't exist on 5.2.4?
+    pub release_metadata: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -1038,6 +1049,7 @@ enum UsefulFileType {
     MainPalette,
     RawColor,
     Init,
+    CrashReport,
     TimelineColorCnst {
         field_type_cp_idx: u16,
         fmim_idx: u16,
@@ -1046,10 +1058,13 @@ enum UsefulFileType {
 }
 
 fn is_useful_file(class: &Class) -> Option<UsefulFileType> {
-    if let Some(mtch) = has_any_string_in_constant_pool(class, &[PALETTE_ANCHOR, INIT_ANCHOR]) {
+    if let Some(mtch) =
+        has_any_string_in_constant_pool(class, &[PALETTE_ANCHOR, INIT_ANCHOR, CRASH_REPORT_ANCHOR])
+    {
         let useful_file_type = match mtch {
             PALETTE_ANCHOR => UsefulFileType::MainPalette,
             INIT_ANCHOR => UsefulFileType::Init,
+            CRASH_REPORT_ANCHOR => UsefulFileType::CrashReport,
             _ => return None,
         };
         return Some(useful_file_type);
@@ -1370,6 +1385,29 @@ fn extract_palette_color_methods(class: &Class) -> Option<PaletteColorMethods> {
         ref_hsv_f,
         name_hsv_f,
     })
+}
+
+fn extract_release_metadata(class: &Class) -> Option<Vec<(String, String)>> {
+    // Find any strings in constant pool which contain the ": " substring
+    let mut metadata = Vec::new();
+    for entry in &class.cp.0 {
+        if let classfile::cpool::Const::Utf8(txt) = entry {
+            let parsed_string = String::from_utf8_lossy(txt.0);
+            let Some((key, value)) = parsed_string.split_once(": ") else {
+                continue;
+            };
+            let key = key.trim();
+            let value = value.trim();
+            let key_count = key.chars().filter(|c| c.is_alphanumeric()).count();
+            let value_count = value.chars().filter(|c| c.is_alphanumeric()).count();
+            if value_count == 0 || key_count == 0 || key == "Not obfuscated" {
+                continue;
+            }
+            metadata.push((key.to_string(), value.to_string()));
+        }
+    }
+
+    Some(metadata)
 }
 
 fn has_any_string_in_constant_pool<'a>(class: &Class, strings: &[&'a str]) -> Option<&'a str> {
