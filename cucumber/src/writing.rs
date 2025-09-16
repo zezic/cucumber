@@ -8,7 +8,7 @@ use krakatau2::{
     lib::{classfile, ParserOptions},
     zip,
 };
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
     extract_general_goodies,
@@ -55,6 +55,20 @@ pub fn write_theme_to_jar(
 
     let named_colors_copy = general_goodies.named_colors.clone();
     for clr in named_colors_copy {
+        let Some(NamedColor::Absolute(absolute_color)) = theme.named_colors.get(&clr.color_name)
+        else {
+            continue;
+        };
+
+        if !matches!(absolute_color.compositing_mode, CompositingMode::Absolute) {
+            // TODO: Detach compositing mode from absolute colors, it meant to be used with relative colors
+            warn!(
+                "Compositing mode is not implemented for absolute colors: {}",
+                clr.color_name
+            );
+            continue;
+        }
+
         let file_name_w_ext = format!("{}.class", clr.class_name);
         let buffer = match patched_classes.remove(&file_name_w_ext) {
             Some(patched) => patched,
@@ -74,36 +88,28 @@ pub fn write_theme_to_jar(
         )
         .map_err(|err| anyhow!("Parse: {:?}", err))?;
 
-        if let Some(NamedColor::Absolute(absolute_color)) = theme.named_colors.get(&clr.color_name)
+        let new_value = ColorComponents::Rgbai(
+            absolute_color.r,
+            absolute_color.g,
+            absolute_color.b,
+            absolute_color.a,
+        );
+
+        if replace_named_color(
+            &mut class,
+            &clr.color_name,
+            new_value,
+            &mut general_goodies.named_colors,
+            &general_goodies.palette_color_methods,
+            absolute_color.compositing_mode.clone(),
+        )
+        .is_none()
         {
-            if absolute_color.compositing_mode.is_some() {
-                // TODO: Detach compositing mode from absolute colors, it meant to be used with relative colors
-                warn!("Compositing mode is not implemented for absolute colors");
-                continue;
-            }
-            let new_value = ColorComponents::Rgbai(
-                absolute_color.r,
-                absolute_color.g,
-                absolute_color.b,
-                absolute_color.a,
-            );
-
-            if replace_named_color(
-                &mut class,
-                &clr.color_name,
-                new_value,
-                &mut general_goodies.named_colors,
-                &general_goodies.palette_color_methods,
-                absolute_color.compositing_mode.clone(),
-            )
-            .is_none()
-            {
-                warn!("failed to replace in {}", file_name_w_ext);
-            }
-
-            let new_buffer = reasm(&file_name_w_ext, &class)?;
-            patched_classes.insert(file_name_w_ext, new_buffer);
+            warn!("failed to replace in {}", file_name_w_ext);
         }
+
+        let new_buffer = reasm(&file_name_w_ext, &class)?;
+        patched_classes.insert(file_name_w_ext, new_buffer);
     }
 
     let mut writer = Writer::new(Path::new(&jar_out))?;

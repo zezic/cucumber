@@ -20,7 +20,6 @@ pub enum CucumberCommand {
     ToggleTheme,
     ToggleFullscreen,
     ToggleCommandPalette,
-    ToggleSourceCreator,
 
     #[cfg(not(target_arch = "wasm32"))]
     ZoomIn,
@@ -29,12 +28,6 @@ pub enum CucumberCommand {
     #[cfg(not(target_arch = "wasm32"))]
     ZoomReset,
 
-    AddOscillograph,
-    AddValues,
-    AddXyPlot,
-    // Dev commands
-    // DumpTree,
-    WriteValuesCSV,
     SaveJar,
 }
 
@@ -78,22 +71,7 @@ impl CucumberCommand {
             ),
 
             Self::ToggleCommandPalette => ("Command palette…", "Toggle the Command Palette"),
-            Self::ToggleSourceCreator => ("Add source…", "Add new data sources"),
 
-            // Self::DumpTree => ("Dump tree", "Dump the current workspace layout tree to disk"),
-            Self::AddOscillograph => (
-                "Add oscillograph",
-                "Add a new oscillograph pane to the current workspace",
-            ),
-            Self::AddValues => (
-                "Add values",
-                "Add a new values pane to the current workspace",
-            ),
-            Self::AddXyPlot => (
-                "Add X-Y plot",
-                "Add a new X-Y plot pane to the current workspace",
-            ),
-            Self::WriteValuesCSV => ("Export to CSV...", "Export frames and values to CSV file"),
             Self::SaveJar => ("Save JAR", "Save the current workspace to a JAR file"),
         }
     }
@@ -149,7 +127,6 @@ impl CucumberCommand {
             Self::ToggleFullscreen => smallvec![],
 
             Self::ToggleCommandPalette => smallvec![cmd(Key::P)],
-            Self::ToggleSourceCreator => smallvec![],
 
             #[cfg(not(target_arch = "wasm32"))]
             Self::ZoomIn => smallvec![egui::gui_zoom::kb_shortcuts::ZOOM_IN],
@@ -158,11 +135,6 @@ impl CucumberCommand {
             #[cfg(not(target_arch = "wasm32"))]
             Self::ZoomReset => smallvec![egui::gui_zoom::kb_shortcuts::ZOOM_RESET],
 
-            Self::AddOscillograph => smallvec![],
-            Self::AddValues => smallvec![],
-            Self::AddXyPlot => smallvec![],
-            Self::WriteValuesCSV => smallvec![],
-            // Self::DumpTree => smallvec![],
             Self::SaveJar => smallvec![cmd(Key::S)],
         }
     }

@@ -47,10 +47,12 @@ pub fn top_bar(
 
             ui.separator();
 
+            let label = "Save JAR";
+            let tokens = egui_ctx.tokens();
             if ui
                 .add_enabled(
                     progress.is_none(),
-                    Button::new("Save JAR").right_text(&re_ui::icons::DOWNLOAD),
+                    re_ui::icons::DOWNLOAD.as_button_with_label(tokens, label),
                 )
                 .clicked()
             {
@@ -93,13 +95,7 @@ fn top_bar_ui(mini_state: &mut PanelsState, ui: &mut egui::Ui) {
 }
 
 fn file_menu(ui: &mut egui::Ui, command_sender: &CommandSender) {
-    CucumberCommand::ToggleSourceCreator.menu_button_ui(ui, command_sender);
-    ui.separator();
-    CucumberCommand::AddOscillograph.menu_button_ui(ui, command_sender);
-    CucumberCommand::AddValues.menu_button_ui(ui, command_sender);
-    CucumberCommand::AddXyPlot.menu_button_ui(ui, command_sender);
-    ui.separator();
-    CucumberCommand::WriteValuesCSV.menu_button_ui(ui, command_sender);
+    CucumberCommand::SaveJar.menu_button_ui(ui, command_sender);
     ui.separator();
     CucumberCommand::Quit.menu_button_ui(ui, command_sender);
 }

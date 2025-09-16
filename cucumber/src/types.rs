@@ -18,7 +18,7 @@ pub struct AbsoluteColor {
     pub g: u8,
     pub b: u8,
     pub a: u8,
-    pub compositing_mode: Option<CompositingMode>,
+    pub compositing_mode: CompositingMode,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

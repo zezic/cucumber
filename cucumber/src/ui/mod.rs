@@ -7,21 +7,23 @@ use std::{
 };
 
 use eframe::{
-    egui::{self, CentralPanel, Context, Frame, Vec2},
+    egui::{self, CentralPanel, Context, Frame, Theme, Vec2},
     App,
 };
 use egui_file_dialog::FileDialog;
 use krakatau2::zip;
+use tracing::error;
 
 use crate::{
     types::{CucumberBitwigTheme, NamedColor, StageProgress, ThemeOperation, ThemeProcessingEvent},
     ui::{
         central_panel::central_panel,
-        commands::{command_channel, CommandReceiver, CommandSender},
+        commands::{command_channel, CommandReceiver, CommandSender, CucumberCommand},
         left_panel::left_panel,
         notifier::UiNotifier,
         status_bar::{status_bar, Progress, StatusBar},
     },
+    writing::write_theme_to_jar,
 };
 
 mod central_panel;
@@ -196,11 +198,51 @@ impl MyApp {
             }
         }
     }
+
+    fn handle_commands(&mut self, ctx: &eframe::egui::Context) {
+        while let Some(command) = self.command_receiver.recv() {
+            match command {
+                CucumberCommand::Quit => {
+                    std::process::exit(0);
+                }
+                CucumberCommand::ToggleTheme => {
+                    ctx.set_theme(match ctx.theme() {
+                        Theme::Light => Theme::Dark,
+                        Theme::Dark => Theme::Light,
+                    });
+                }
+                CucumberCommand::ToggleFullscreen => todo!(),
+                CucumberCommand::ToggleCommandPalette => todo!(),
+                CucumberCommand::ZoomIn => todo!(),
+                CucumberCommand::ZoomOut => todo!(),
+                CucumberCommand::ZoomReset => todo!(),
+                CucumberCommand::SaveJar => {
+                    let Some(theme) = self.theme.clone() else {
+                        continue;
+                    };
+                    let jar_in = self.jar_in.clone();
+                    let jar_out = self.jar_out.clone().unwrap_or(jar_in.clone());
+                    let notifier = self.notifier.clone();
+                    std::thread::spawn(move || {
+                        if let Err(err) = write_theme_to_jar(jar_in, jar_out, theme, |event| {
+                            notifier.notify(Event::Progress(ProgressEvent::ThemeOperation {
+                                event,
+                                operation: ThemeOperation::WritingToJar,
+                            }));
+                        }) {
+                            error!("Failed to save JAR: {}", err);
+                        };
+                    });
+                }
+            }
+        }
+    }
 }
 
 impl App for MyApp {
     fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
         self.handle_events();
+        self.handle_commands(ctx);
 
         let frame = Frame::central_panel(&ctx.style());
 

@@ -29,7 +29,7 @@ use krakatau2::{
     },
     zip::{self, ZipArchive},
 };
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use types::{CompositingMode, ThemeProcessingEvent};
 
 use crate::types::Stage;
@@ -260,7 +260,7 @@ fn replace_named_color<'a>(
     new_value: ColorComponents,
     named_colors: &mut [NamedColor],
     palette_color_meths: &'a PaletteColorMethods,
-    compositing_mode: Option<CompositingMode>,
+    compositing_mode: CompositingMode,
 ) -> Option<()> {
     if !matches!(
         new_value,
@@ -275,13 +275,9 @@ fn replace_named_color<'a>(
     debug!("### REPLACING {}: {:?}", name, new_value);
 
     let method_descr_to_find = match compositing_mode {
-        Some(CompositingMode::BlendedOnBackground) => {
-            &palette_color_meths.rgba_i_blended_on_background
-        }
-        Some(CompositingMode::RelativeToBackground) => {
-            &palette_color_meths.hsv_f_relative_to_background
-        }
-        _ => &palette_color_meths.rgba_i_absolute,
+        CompositingMode::BlendedOnBackground => &palette_color_meths.rgba_i_blended_on_background,
+        CompositingMode::RelativeToBackground => &palette_color_meths.hsv_f_relative_to_background,
+        CompositingMode::Absolute => &palette_color_meths.rgba_i_absolute,
     };
 
     let (rgbai_method_id, _rgbai_method_desc) = match find_method_by_sig(
@@ -291,11 +287,9 @@ fn replace_named_color<'a>(
     ) {
         Some(met) => met,
         None => {
-            if matches!(
-                compositing_mode,
-                Some(CompositingMode::RelativeToBackground)
-            ) {
-                // unimplemented!("Not done yet, but it's easy");
+            if matches!(compositing_mode, CompositingMode::RelativeToBackground) {
+                warn!("Relative compositing is not supported yet: {}", name);
+                return None;
             }
             let rgbai_method_desc = &palette_color_meths.rgba_i_absolute;
 
@@ -375,10 +369,6 @@ fn replace_named_color<'a>(
             continue;
         };
         if text == name {
-            if name == "Knob Body" {
-                debug!("### TEXT == NAME {:?}", name);
-            }
-
             loop {
                 let ix = old_bytecode.next().unwrap();
                 if let Instr::Invokevirtual(method_id) = ix.1 {
@@ -602,7 +592,7 @@ pub struct NamedColor {
     pub method_idx: usize,
     pub color_name: String,
     pub components: ColorComponents,
-    pub compositing_mode: Option<CompositingMode>,
+    pub compositing_mode: CompositingMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1292,21 +1282,21 @@ pub struct PaletteColorMethods {
 }
 
 impl PaletteColorMethods {
-    fn all(&self) -> Vec<(&MethodDescription, Option<CompositingMode>)> {
+    fn all(&self) -> Vec<(&MethodDescription, CompositingMode)> {
         vec![
-            (&self.grayscale_i, None),
-            (&self.rgb_i, None),
-            (&self.rgba_i_absolute, Some(CompositingMode::Absolute)),
+            (&self.grayscale_i, CompositingMode::Absolute),
+            (&self.rgb_i, CompositingMode::Absolute),
+            (&self.rgba_i_absolute, CompositingMode::Absolute),
             (
                 &self.rgba_i_blended_on_background,
-                Some(CompositingMode::BlendedOnBackground),
+                CompositingMode::BlendedOnBackground,
             ),
             (
                 &self.hsv_f_relative_to_background,
-                Some(CompositingMode::RelativeToBackground),
+                CompositingMode::RelativeToBackground,
             ),
-            (&self.ref_hsv_f, None),
-            (&self.name_hsv_f, None),
+            (&self.ref_hsv_f, CompositingMode::Absolute),
+            (&self.name_hsv_f, CompositingMode::Absolute),
         ]
     }
 
