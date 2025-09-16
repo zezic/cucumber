@@ -1,8 +1,10 @@
+use std::collections::BTreeMap;
+
 use eframe::{
     egui::{
         self,
         color_picker::{color_picker_hsva_2d, Alpha},
-        Frame, Rgba,
+        Rgba,
     },
     epaint::Hsva,
 };
@@ -13,7 +15,7 @@ use re_ui::{
 use tracing::info;
 
 use crate::types::{
-    CucumberBitwigTheme,
+    AbsoluteColor, CucumberBitwigTheme,
     NamedColor::{self, Absolute},
 };
 
@@ -21,6 +23,7 @@ pub fn left_panel(
     ui: &mut egui::Ui,
     theme: Option<&mut CucumberBitwigTheme>,
     selected_color: &mut Option<String>,
+    changed_colors: &mut BTreeMap<String, NamedColor>,
 ) {
     let orig_spacing = ui.spacing_mut().item_spacing.y;
     ui.spacing_mut().item_spacing.y = 0.0;
@@ -43,7 +46,7 @@ pub fn left_panel(
             .show(ui, |ui| {
                 ui.panel_content(|ui| {
                     list_item_scope(ui, "layout tree", |ui| {
-                        colors_list(ui, theme, selected_color);
+                        colors_list(ui, theme, selected_color, changed_colors);
                     });
                 });
             });
@@ -52,7 +55,13 @@ pub fn left_panel(
     if let (Some(theme), Some(selected_color_name)) = (theme, &selected_color) {
         let maybe_color = theme.named_colors.get_mut(selected_color_name);
         if let Some(NamedColor::Absolute(absolute_color)) = maybe_color {
-            let deselect = color_picker(ui, orig_spacing, absolute_color, selected_color_name);
+            let deselect = color_picker(
+                ui,
+                orig_spacing,
+                absolute_color,
+                selected_color_name,
+                changed_colors,
+            );
             if deselect {
                 *selected_color = None;
             }
@@ -64,6 +73,7 @@ fn colors_list(
     ui: &mut egui::Ui,
     theme: &CucumberBitwigTheme,
     selected_color: &mut Option<String>,
+    changed_colors: &mut BTreeMap<String, NamedColor>,
 ) {
     let desired_width = ui.available_width();
     for (color_name, named_color) in &theme.named_colors {
@@ -88,13 +98,14 @@ fn colors_list(
         };
 
         let selected = matches!(selected_color, Some(selected) if selected == color_name);
-        if ui
-            .list_item()
-            .selected(selected)
-            .show_flat(ui, content)
-            .clicked()
-        {
+        let list_item_response = ui.list_item().selected(selected).show_flat(ui, content);
+
+        if list_item_response.clicked() {
             *selected_color = Some(color_name.clone());
+        }
+
+        if list_item_response.changed() {
+            changed_colors.insert(color_name.clone(), named_color.clone());
         }
     }
 }
@@ -102,8 +113,9 @@ fn colors_list(
 fn color_picker(
     ui: &mut egui::Ui,
     orig_spacing: f32,
-    absolute_color: &mut crate::types::AbsoluteColor,
+    absolute_color: &mut AbsoluteColor,
     selected_color_name: &String,
+    changed_colors: &mut BTreeMap<String, NamedColor>,
 ) -> bool {
     let mut deselect = false;
 
@@ -143,6 +155,11 @@ fn color_picker(
             absolute_color.g = g;
             absolute_color.b = b;
             absolute_color.a = a;
+
+            changed_colors.insert(
+                selected_color_name.clone(),
+                NamedColor::Absolute(absolute_color.clone()),
+            );
         }
     });
 

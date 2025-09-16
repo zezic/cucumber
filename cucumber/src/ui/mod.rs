@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, HashSet, VecDeque},
+    mem,
     sync::{
         mpsc::{self, Receiver},
         Arc,
@@ -7,7 +8,7 @@ use std::{
 };
 
 use eframe::{
-    egui::{self, CentralPanel, Context, Frame, Theme, Vec2},
+    egui::{self, CentralPanel, Context, Frame, Theme},
     App,
 };
 use egui_file_dialog::FileDialog;
@@ -18,7 +19,10 @@ use crate::{
     types::{CucumberBitwigTheme, NamedColor, StageProgress, ThemeOperation, ThemeProcessingEvent},
     ui::{
         central_panel::central_panel,
-        commands::{command_channel, CommandReceiver, CommandSender, CucumberCommand},
+        command_palette::CommandPalette,
+        commands::{
+            command_channel, CommandReceiver, CommandSender, CucumberCommand, CucumberCommandSender,
+        },
         left_panel::left_panel,
         notifier::UiNotifier,
         status_bar::{status_bar, Progress, StatusBar},
@@ -42,9 +46,7 @@ pub struct MyApp {
     theme: Option<CucumberBitwigTheme>,
     selected_color: Option<String>,
     filter: String,
-    first_run: bool,
     file_dialog: FileDialog,
-    last_mockup_size: Vec2,
     changed_colors: BTreeMap<String, NamedColor>,
     event_rx: Receiver<Event>,
     notifier: UiNotifier,
@@ -52,6 +54,7 @@ pub struct MyApp {
     command_sender: CommandSender,
     command_receiver: CommandReceiver,
     status_bar: StatusBar,
+    command_palette: CommandPalette,
 }
 
 struct PanelsState {
@@ -133,9 +136,7 @@ impl MyApp {
             theme: None,
             filter: String::new(),
             selected_color: None,
-            first_run: true,
             file_dialog,
-            last_mockup_size: Vec2::default(),
             changed_colors: BTreeMap::new(),
             event_rx,
             notifier,
@@ -147,6 +148,7 @@ impl MyApp {
             command_sender,
             command_receiver,
             status_bar: StatusBar::default(),
+            command_palette: CommandPalette::default(),
         })
     }
 
@@ -211,25 +213,40 @@ impl MyApp {
                         Theme::Dark => Theme::Light,
                     });
                 }
-                CucumberCommand::ToggleFullscreen => todo!(),
-                CucumberCommand::ToggleCommandPalette => todo!(),
-                CucumberCommand::ZoomIn => todo!(),
-                CucumberCommand::ZoomOut => todo!(),
-                CucumberCommand::ZoomReset => todo!(),
+                CucumberCommand::ToggleCommandPalette => {
+                    self.command_palette.toggle();
+                }
+                CucumberCommand::ZoomIn => {
+                    let mut zoom_factor = ctx.zoom_factor();
+                    zoom_factor += 0.1;
+                    ctx.set_zoom_factor(zoom_factor);
+                }
+                CucumberCommand::ZoomOut => {
+                    let mut zoom_factor = ctx.zoom_factor();
+                    zoom_factor -= 0.1;
+                    ctx.set_zoom_factor(zoom_factor);
+                }
+                CucumberCommand::ZoomReset => {
+                    ctx.set_zoom_factor(1.0);
+                }
                 CucumberCommand::SaveJar => {
-                    let Some(theme) = self.theme.clone() else {
+                    if !self.is_dirty() {
                         continue;
-                    };
+                    }
                     let jar_in = self.jar_in.clone();
                     let jar_out = self.jar_out.clone().unwrap_or(jar_in.clone());
                     let notifier = self.notifier.clone();
+                    let mut changed_colors = BTreeMap::new();
+                    mem::swap(&mut changed_colors, &mut self.changed_colors);
                     std::thread::spawn(move || {
-                        if let Err(err) = write_theme_to_jar(jar_in, jar_out, theme, |event| {
-                            notifier.notify(Event::Progress(ProgressEvent::ThemeOperation {
-                                event,
-                                operation: ThemeOperation::WritingToJar,
-                            }));
-                        }) {
+                        if let Err(err) =
+                            write_theme_to_jar(jar_in, jar_out, changed_colors, |event| {
+                                notifier.notify(Event::Progress(ProgressEvent::ThemeOperation {
+                                    event,
+                                    operation: ThemeOperation::WritingToJar,
+                                }));
+                            })
+                        {
                             error!("Failed to save JAR: {}", err);
                         };
                     });
@@ -237,10 +254,19 @@ impl MyApp {
             }
         }
     }
+
+    /// Means we have unsaved changes.
+    fn is_dirty(&self) -> bool {
+        !self.changed_colors.is_empty()
+    }
 }
 
 impl App for MyApp {
     fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
+        if let Some(cmd) = CucumberCommand::listen_for_kb_shortcut(ctx) {
+            self.command_sender.send_ui(cmd);
+        }
+
         self.handle_events();
         self.handle_commands(ctx);
 
@@ -251,6 +277,7 @@ impl App for MyApp {
             &mut self.panels_state,
             ctx,
             &self.status_bar.progress,
+            self.changed_colors.len(),
         );
 
         egui::TopBottomPanel::bottom("bottom_panel").show_animated(
@@ -268,11 +295,20 @@ impl App for MyApp {
                 ..Default::default()
             })
             .show_animated(ctx, self.panels_state.show_left_panel, |ui| {
-                left_panel(ui, self.theme.as_mut(), &mut self.selected_color);
+                left_panel(
+                    ui,
+                    self.theme.as_mut(),
+                    &mut self.selected_color,
+                    &mut self.changed_colors,
+                );
             });
 
         CentralPanel::default().frame(frame).show(ctx, |ui| {
             central_panel(ui);
         });
+
+        if let Some(command) = self.command_palette.show(ctx) {
+            self.command_sender.send_ui(command);
+        }
     }
 }

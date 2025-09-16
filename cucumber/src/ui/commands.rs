@@ -14,18 +14,12 @@ pub trait CucumberCommandSender {
 /// and all are visible in the [`crate::CommandPalette`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, strum_macros::EnumIter)]
 pub enum CucumberCommand {
-    #[cfg(not(target_arch = "wasm32"))]
     Quit,
-    // Settings,
     ToggleTheme,
-    ToggleFullscreen,
     ToggleCommandPalette,
 
-    #[cfg(not(target_arch = "wasm32"))]
     ZoomIn,
-    #[cfg(not(target_arch = "wasm32"))]
     ZoomOut,
-    #[cfg(not(target_arch = "wasm32"))]
     ZoomReset,
 
     SaveJar,
@@ -42,29 +36,11 @@ impl CucumberCommand {
 
     pub fn text_and_tooltip(self) -> (&'static str, &'static str) {
         match self {
-            #[cfg(not(target_arch = "wasm32"))]
             Self::Quit => ("Quit", "Close the Rerun Viewer"),
 
-            // Self::Settings => ("Settings…", "Show the settings screen"),
             Self::ToggleTheme => ("Toggle theme", "Switch between light and dark themes"),
-
-            #[cfg(not(target_arch = "wasm32"))]
-            Self::ToggleFullscreen => (
-                "Toggle fullscreen",
-                "Toggle between windowed and fullscreen viewer",
-            ),
-
-            #[cfg(target_arch = "wasm32")]
-            Self::ToggleFullscreen => (
-                "Toggle fullscreen",
-                "Toggle between full viewport dimensions and initial dimensions",
-            ),
-
-            #[cfg(not(target_arch = "wasm32"))]
             Self::ZoomIn => ("Zoom in", "Increases the UI zoom level"),
-            #[cfg(not(target_arch = "wasm32"))]
             Self::ZoomOut => ("Zoom out", "Decreases the UI zoom level"),
-            #[cfg(not(target_arch = "wasm32"))]
             Self::ZoomReset => (
                 "Reset zoom",
                 "Resets the UI zoom level to the operating system's default value",
@@ -112,27 +88,18 @@ impl CucumberCommand {
         }
 
         match self {
-            #[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
+            #[cfg(target_os = "windows")]
             Self::Quit => smallvec![KeyboardShortcut::new(Modifiers::ALT, Key::F4)],
 
-            #[cfg(all(not(target_arch = "wasm32"), not(target_os = "windows")))]
+            #[cfg(not(target_os = "windows"))]
             Self::Quit => smallvec![cmd(Key::Q)],
 
-            // Self::Settings => smallvec![cmd(Key::Comma)],
             Self::ToggleTheme => smallvec![key(Key::F12)],
-
-            #[cfg(not(target_arch = "wasm32"))]
-            Self::ToggleFullscreen => smallvec![key(Key::F11)],
-            #[cfg(target_arch = "wasm32")]
-            Self::ToggleFullscreen => smallvec![],
 
             Self::ToggleCommandPalette => smallvec![cmd(Key::P)],
 
-            #[cfg(not(target_arch = "wasm32"))]
             Self::ZoomIn => smallvec![egui::gui_zoom::kb_shortcuts::ZOOM_IN],
-            #[cfg(not(target_arch = "wasm32"))]
             Self::ZoomOut => smallvec![egui::gui_zoom::kb_shortcuts::ZOOM_OUT],
-            #[cfg(not(target_arch = "wasm32"))]
             Self::ZoomReset => smallvec![egui::gui_zoom::kb_shortcuts::ZOOM_RESET],
 
             Self::SaveJar => smallvec![cmd(Key::S)],

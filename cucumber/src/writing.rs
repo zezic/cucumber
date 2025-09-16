@@ -1,14 +1,17 @@
-use std::{collections::HashMap, io::Read, path::Path};
+use std::{
+    collections::{BTreeMap, HashMap},
+    io::Read,
+    path::Path,
+};
 
 use anyhow::anyhow;
 
-use eframe::{epaint::Hsva, WebGlContextOption};
 use krakatau2::{
     file_output_util::Writer,
     lib::{classfile, ParserOptions},
     zip,
 };
-use tracing::{debug, info, warn};
+use tracing::warn;
 
 use crate::{
     extract_general_goodies,
@@ -24,7 +27,7 @@ use crate::{
 pub fn write_theme_to_jar(
     jar_in: String,
     jar_out: String,
-    theme: CucumberBitwigTheme,
+    changed_colors: BTreeMap<String, NamedColor>,
     mut report_progress: impl FnMut(ThemeProcessingEvent),
 ) -> anyhow::Result<()> {
     report_progress(ThemeProcessingEvent {
@@ -49,13 +52,13 @@ pub fn write_theme_to_jar(
     )
     .map_err(|err| anyhow!("Parse: {:?}", err))?;
     patch_class(&mut class);
-    let patched = reasm(file.name(), &class).unwrap();
+    let patched = reasm(&class).unwrap();
     patched_classes.insert(file.name().to_string(), patched);
     drop(file);
 
     let named_colors_copy = general_goodies.named_colors.clone();
-    for clr in named_colors_copy {
-        let Some(NamedColor::Absolute(absolute_color)) = theme.named_colors.get(&clr.color_name)
+    for jar_color in named_colors_copy {
+        let Some(NamedColor::Absolute(absolute_color)) = changed_colors.get(&jar_color.color_name)
         else {
             continue;
         };
@@ -64,12 +67,12 @@ pub fn write_theme_to_jar(
             // TODO: Detach compositing mode from absolute colors, it meant to be used with relative colors
             warn!(
                 "Compositing mode is not implemented for absolute colors: {}",
-                clr.color_name
+                jar_color.color_name
             );
             continue;
         }
 
-        let file_name_w_ext = format!("{}.class", clr.class_name);
+        let file_name_w_ext = format!("{}.class", jar_color.class_name);
         let buffer = match patched_classes.remove(&file_name_w_ext) {
             Some(patched) => patched,
             None => {
@@ -97,7 +100,7 @@ pub fn write_theme_to_jar(
 
         if replace_named_color(
             &mut class,
-            &clr.color_name,
+            &jar_color.color_name,
             new_value,
             &mut general_goodies.named_colors,
             &general_goodies.palette_color_methods,
@@ -108,7 +111,7 @@ pub fn write_theme_to_jar(
             warn!("failed to replace in {}", file_name_w_ext);
         }
 
-        let new_buffer = reasm(&file_name_w_ext, &class)?;
+        let new_buffer = reasm(&class)?;
         patched_classes.insert(file_name_w_ext, new_buffer);
     }
 

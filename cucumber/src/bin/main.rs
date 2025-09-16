@@ -21,8 +21,6 @@ fn main() -> eframe::Result {
     use tracing_subscriber;
     tracing_subscriber::fmt::init();
 
-    use eframe::egui;
-
     let args = Args::parse();
 
     let options = eframe_options();

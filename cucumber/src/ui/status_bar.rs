@@ -1,4 +1,5 @@
 use eframe::egui::{self, ProgressBar, Spinner};
+use re_ui::UiExt;
 
 #[derive(Default)]
 pub struct StatusBar {
@@ -23,8 +24,11 @@ pub fn status_bar(ui: &mut egui::Ui, status_bar: &StatusBar) {
         ui.weak(format!("Cucumber v{}", VERSION));
         ui.separator();
         if let Some(progress) = &status_bar.progress {
+            ui.weak(progress.group);
+            ui.small_icon(&re_ui::icons::ARROW_RIGHT, None);
+            ui.strong(progress.name);
+
             if let Some(value) = progress.value {
-                ui.strong(progress.name);
                 let prev = ui.visuals_mut().extreme_bg_color;
                 ui.visuals_mut().extreme_bg_color = ui.visuals().faint_bg_color;
                 ui.add(
@@ -34,8 +38,7 @@ pub fn status_bar(ui: &mut egui::Ui, status_bar: &StatusBar) {
                 );
                 ui.visuals_mut().extreme_bg_color = prev;
             } else {
-                ui.strong(progress.name);
-                ui.add(Spinner::new());
+                ui.add(Spinner::new().size(ui.available_height() * 0.8));
             }
         }
     });

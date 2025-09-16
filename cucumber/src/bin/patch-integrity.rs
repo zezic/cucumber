@@ -1,24 +1,13 @@
 use std::io::Read;
-use std::{
-    env,
-    fs::{self, File},
-    io::BufWriter,
-    path::Path,
-};
+use std::{env, fs, path::Path};
 
 use anyhow::anyhow;
 
-use cucumber::{
-    extract_general_goodies,
-    types::{AbsoluteColor, ColorConst, CucumberBitwigTheme, NamedColor, UiTarget},
-};
+use cucumber::patching::patch_class;
+use cucumber::{extract_general_goodies, reasm};
 use krakatau2::{
     file_output_util::Writer,
-    lib::{
-        assemble,
-        classfile::{self, code::Instr, parse::Class},
-        AssemblerOptions, DisassemblerOptions, ParserOptions,
-    },
+    lib::{classfile, ParserOptions},
     zip,
 };
 
@@ -67,48 +56,4 @@ fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-pub fn patch_class(class: &mut Class<'_>) {
-    for method in &mut class.methods {
-        let Some(attr) = method.attrs.first_mut() else {
-            continue;
-        };
-        let classfile::attrs::AttrBody::Code((code_1, _code_2)) = &mut attr.body else {
-            continue;
-        };
-        let bytecode = &mut code_1.bytecode;
-        let mut new_bytecode = vec![];
-        for (pos, ix) in bytecode.0.drain(..) {
-            new_bytecode.push((pos, ix));
-            let len = new_bytecode.len();
-            if len < 3 {
-                continue;
-            }
-            let mut ixs = &mut new_bytecode[len - 3..];
-            if ixs.len() != 3 {
-                continue;
-            }
-            if let [(_, ix), (_, Instr::Sipush(5000)), (_, Instr::IfIcmple(_))] = &mut ixs {
-                *ix = Instr::Sipush(0);
-            }
-        }
-        bytecode.0 = new_bytecode;
-    }
-}
-
-fn reasm(class: &Class<'_>) -> anyhow::Result<Vec<u8>> {
-    let mut out = Vec::new();
-    krakatau2::lib::disassemble::disassemble(
-        &mut out,
-        &class,
-        DisassemblerOptions { roundtrip: true },
-    )?;
-
-    let source = std::str::from_utf8(&out)?;
-    let mut assembled =
-        assemble(source, AssemblerOptions {}).map_err(|err| anyhow!("Asm: {:?}", err))?;
-    let (_name, data) = assembled.pop().unwrap();
-
-    Ok(data)
 }

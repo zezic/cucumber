@@ -1,20 +1,9 @@
-use std::{
-    collections::HashMap,
-    env,
-    fmt::Debug,
-    fs,
-    io::Read,
-    path::Path,
-    time::{Duration, Instant},
-};
+use std::{collections::HashMap, fmt::Debug, io::Read};
 
-use anyhow::anyhow;
+use thiserror::Error;
 
 use colorsys::{ColorTransform, Rgb, SaturationInSpace};
-use eframe::epaint::Hsva;
-// use indicatif::ProgressBar;
 use krakatau2::{
-    file_output_util::Writer,
     lib::{
         assemble,
         classfile::{
@@ -27,14 +16,15 @@ use krakatau2::{
         disassemble::refprinter::{ConstData, FmimTag, PrimTag, RefPrinter, SingleTag},
         parse_utf8, AssemblerOptions, DisassemblerOptions, ParserOptions,
     },
-    zip::{self, ZipArchive},
+    zip::ZipArchive,
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 use types::{CompositingMode, ThemeProcessingEvent};
 
-use crate::types::Stage;
+use crate::{legacy::TimelineColorReference, types::Stage};
 
 pub mod exchange;
+pub mod legacy;
 pub mod patching;
 pub mod types;
 pub mod ui;
@@ -70,133 +60,28 @@ const RAW_COLOR_ANCHOR: f64 = 0.666333;
 //     }
 // }
 
-fn main() -> anyhow::Result<()> {
-    let pgm_start = Instant::now();
-    let start = Instant::now();
-
-    let args: Vec<String> = env::args().collect();
-    let input_jar = &args[1];
-    let output_jar = &args[2];
-
-    let file = fs::File::open(input_jar)?;
-    let mut zip = zip::ZipArchive::new(file)?;
-
-    let mut general_goodies = extract_general_goodies(&mut zip, |_| {})?;
-
-    debug!("STAGE 1: {}", start.elapsed().as_millis());
-    let start = Instant::now();
-
-    let colors_to_randomize = general_goodies.named_colors.clone();
-
-    let mut patched_classes = HashMap::new();
-
-    for clr in colors_to_randomize {
-        let file_name_w_ext = format!("{}.class", clr.class_name);
-        let buffer = match patched_classes.remove(&file_name_w_ext) {
-            Some(patched) => patched,
-            None => {
-                let mut file = zip.by_name(&file_name_w_ext)?;
-                let mut buffer = Vec::new();
-                file.read_to_end(&mut buffer)?;
-                buffer
-            }
-        };
-
-        let mut class = classfile::parse(
-            &buffer,
-            ParserOptions {
-                no_short_code_attr: true,
-            },
-        )
-        .map_err(|err| anyhow!("Parse: {:?}", err))?;
-
-        if replace_named_color(
-            &mut class,
-            &clr.color_name,
-            ColorComponents::Rgbai(
-                rand::random(),
-                rand::random(),
-                rand::random(),
-                clr.components.alpha().unwrap_or(255),
-            ),
-            &mut general_goodies.named_colors,
-            &general_goodies.palette_color_methods,
-            clr.compositing_mode,
-        )
-        .is_none()
-        {
-            debug!("failed to replace in {}", file_name_w_ext);
-        }
-
-        let new_buffer = reasm(&file_name_w_ext, &class)?;
-        patched_classes.insert(file_name_w_ext, new_buffer);
-    }
-
-    if let Some(timeline_color_ref) = &mut general_goodies.timeline_color_ref {
-        let file_name_w_ext = timeline_color_ref.class_filename.clone();
-        let mut file = zip.by_name(&file_name_w_ext)?;
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)?;
-
-        let mut class = classfile::parse(
-            &buffer,
-            ParserOptions {
-                no_short_code_attr: true,
-            },
-        )
-        .map_err(|err| anyhow!("Parse: {:?}", err))?;
-        use rand::prelude::SliceRandom;
-        let mut rng = rand::thread_rng();
-        let other_color = general_goodies
-            .raw_colors
-            .constants
-            .consts
-            .choose(&mut rng)
-            .unwrap();
-        switch_timeline_color(&mut class, &other_color.const_name, timeline_color_ref);
-        let new_buffer = reasm(&file_name_w_ext, &class)?;
-        patched_classes.insert(file_name_w_ext, new_buffer);
-    }
-
-    debug!("STAGE 2: {}", start.elapsed().as_millis());
-    let start = Instant::now();
-
-    let mut writer = Writer::new(Path::new(output_jar))?;
-
-    for i in 0..zip.len() {
-        let mut file = zip.by_index(i)?;
-        let name = file.name().to_owned();
-
-        let buffer = match patched_classes.remove(&name) {
-            Some(patched) => patched,
-            None => {
-                let mut buffer = Vec::new();
-                file.read_to_end(&mut buffer)?;
-                buffer
-            }
-        };
-
-        writer.write(Some(&name), &buffer)?;
-    }
-    debug!("STAGE 3: {}", start.elapsed().as_millis());
-    debug!("TOTAL: {}", pgm_start.elapsed().as_millis());
-
-    Ok(())
+#[derive(Debug, Error)]
+pub enum ReasmError {
+    #[error("Assemble error: {0:?}")]
+    Assemble(krakatau2::lib::AssembleError),
+    #[error("Disassemble error: {0}")]
+    Disassemble(std::io::Error),
+    #[error("Source parse error: {0}")]
+    SourceParse(#[from] std::str::Utf8Error),
 }
 
-fn reasm(fname: &str, class: &Class<'_>) -> anyhow::Result<Vec<u8>> {
+pub fn reasm(class: &Class<'_>) -> Result<Vec<u8>, ReasmError> {
     let mut out = Vec::new();
+
     krakatau2::lib::disassemble::disassemble(
         &mut out,
         &class,
         DisassemblerOptions { roundtrip: true },
-    )?;
+    )
+    .map_err(ReasmError::Disassemble)?;
 
     let source = std::str::from_utf8(&out)?;
-    let mut assembled = assemble(source, AssemblerOptions {}).map_err(|err| {
-        err.display(fname, source);
-        anyhow!("Asm: {:?}", err)
-    })?;
+    let mut assembled = assemble(source, AssemblerOptions {}).map_err(ReasmError::Assemble)?;
     let (_name, data) = assembled.pop().unwrap();
 
     Ok(data)
@@ -228,30 +113,6 @@ fn find_method_by_sig(
     }
 
     None
-}
-
-fn switch_timeline_color<'a>(
-    class: &mut Class<'a>,
-    new_const: &'a str,
-    timeline_color_ref: &mut TimelineColorReference,
-) -> Option<()> {
-    let utf_data_idx = class.cp.0.len();
-    class.cp.0.push(Const::Utf8(BStr(new_const.as_bytes())));
-
-    let nat_idx = class.cp.0.len();
-    class.cp.0.push(Const::NameAndType(
-        utf_data_idx as u16,
-        timeline_color_ref.field_type_cp_idx,
-    ));
-
-    let Const::Field(_, old_nat_idx) = class.cp.0.get_mut(timeline_color_ref.fmim_idx as usize)?
-    else {
-        panic!()
-    };
-    *old_nat_idx = nat_idx as u16;
-
-    timeline_color_ref.const_name = new_const.to_string();
-    Some(())
 }
 
 fn replace_named_color<'a>(
@@ -569,14 +430,6 @@ pub fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
 }
 
 #[derive(Debug)]
-pub struct TimelineColorReference {
-    pub class_filename: String,
-    pub const_name: String,
-    pub field_type_cp_idx: u16,
-    pub fmim_idx: u16,
-}
-
-#[derive(Debug)]
 pub struct GeneralGoodies {
     #[allow(dead_code)]
     pub init_class: String,
@@ -773,7 +626,6 @@ pub enum ColorComponents {
 
 #[derive(Debug)]
 struct FloatToAddToConstantPool {
-    index: usize,
     float: f32,
 }
 
@@ -811,16 +663,13 @@ impl ColorComponents {
                 let mut ixs = vec![];
                 let mut floats = vec![];
                 for (idx, comp) in [h, s, v].into_iter().enumerate() {
-                    let index = next_free_cpool_idx + idx;
-                    if index > 255 {
-                        ixs.push(Instr::LdcW(index as u16));
+                    let cpool_idx = next_free_cpool_idx + idx;
+                    if cpool_idx > 255 {
+                        ixs.push(Instr::LdcW(cpool_idx as u16));
                     } else {
-                        ixs.push(Instr::Ldc(index as u8));
+                        ixs.push(Instr::Ldc(cpool_idx as u8));
                     }
-                    floats.push(FloatToAddToConstantPool {
-                        index,
-                        float: *comp,
-                    });
+                    floats.push(FloatToAddToConstantPool { float: *comp });
                 }
                 (ixs, Some(floats))
             }
@@ -833,7 +682,7 @@ impl ColorComponents {
             ColorComponents::Grayscale(v) => (*v, *v, *v),
             ColorComponents::Rgbi(r, g, b) => (*r, *g, *b),
             ColorComponents::Rgbai(r, g, b, _a) => (*r, *g, *b),
-            ColorComponents::DeltaHsvf(dh, ds, dv) => {
+            ColorComponents::DeltaHsvf(..) => {
                 debug!("It's dh ds dv, it's not absolute color");
                 return None;
             }

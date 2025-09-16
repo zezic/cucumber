@@ -1456,6 +1456,7 @@ dependencies = [
  "strum 0.27.2",
  "strum_macros 0.27.2",
  "sublime_fuzzy",
+ "thiserror 2.0.16",
  "tracing",
  "tracing-subscriber",
  "xml-rs",

@@ -1,6 +1,4 @@
-use eframe::egui::Button;
-#[cfg(not(target_arch = "wasm32"))]
-use eframe::egui::{self, os::OperatingSystem};
+use eframe::egui;
 use re_ui::{ContextExt, UiExt};
 
 use crate::ui::{
@@ -14,6 +12,7 @@ pub fn top_bar(
     mini_state: &mut PanelsState,
     egui_ctx: &egui::Context,
     progress: &Option<Progress>,
+    changes: usize,
 ) {
     let top_bar_style = egui_ctx.top_bar_style(false);
 
@@ -51,12 +50,17 @@ pub fn top_bar(
             let tokens = egui_ctx.tokens();
             if ui
                 .add_enabled(
-                    progress.is_none(),
+                    progress.is_none() && changes > 0,
                     re_ui::icons::DOWNLOAD.as_button_with_label(tokens, label),
                 )
                 .clicked()
             {
                 command_sender.send_ui(CucumberCommand::SaveJar);
+            }
+            if changes > 0 {
+                ui.weak(format!("{} changes", changes));
+            } else {
+                ui.weak("No changes");
             }
 
             top_bar_ui(mini_state, ui);
@@ -101,12 +105,11 @@ fn file_menu(ui: &mut egui::Ui, command_sender: &CommandSender) {
 }
 
 fn view_menu(ui: &mut egui::Ui, command_sender: &CommandSender) {
-    CucumberCommand::ToggleFullscreen.menu_button_ui(ui, command_sender);
-    CucumberCommand::ToggleTheme.menu_button_ui(ui, command_sender);
+    CucumberCommand::ToggleCommandPalette.menu_button_ui(ui, command_sender);
     ui.separator();
     CucumberCommand::ZoomIn.menu_button_ui(ui, command_sender);
     CucumberCommand::ZoomOut.menu_button_ui(ui, command_sender);
     CucumberCommand::ZoomReset.menu_button_ui(ui, command_sender);
     ui.separator();
-    CucumberCommand::ToggleCommandPalette.menu_button_ui(ui, command_sender);
+    CucumberCommand::ToggleTheme.menu_button_ui(ui, command_sender);
 }
