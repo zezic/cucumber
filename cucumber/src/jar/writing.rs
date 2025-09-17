@@ -15,7 +15,8 @@ use tracing::warn;
 
 use crate::{
     jar::{
-        analysis::extract_general_goodies, goodies::ColorComponents, reasm, replace_named_color,
+        analysis::extract_general_goodies, goodies::ColorComponents,
+        modification::replace_named_color, reasm,
     },
     patching::patch_class,
     types::{CompositingMode, NamedColor, Stage, StageProgress, ThemeProcessingEvent},
