@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashSet, VecDeque},
+    collections::{BTreeMap, VecDeque},
     mem,
     path::{Path, PathBuf},
     sync::{

@@ -4,7 +4,7 @@ use eframe::{
     egui::{
         self,
         color_picker::{color_picker_hsva_2d, Alpha},
-        Rgba,
+        Rgba, TextStyle,
     },
     epaint::Hsva,
 };
@@ -32,8 +32,28 @@ pub fn left_panel(
         ui.panel_title_bar("Palette", None);
     });
 
+    let available_width = ui.available_width();
+
+    let title_height = ui
+        .style()
+        .text_styles
+        .get(&TextStyle::Body)
+        .map(|font_id| font_id.size)
+        .unwrap_or(16.0);
+
+    let color_picker_height = ui.tokens().panel_margin().sum().y // title margin
+        + title_height // font size
+        // + orig_spacing // padding under title
+        + ui.spacing().interact_size.y // inputs
+        + ui.spacing().interact_size.y // preview
+        + available_width // color square
+        + ui.spacing().interact_size.y // slider 1
+        + ui.spacing().interact_size.y // slider 2
+        + orig_spacing * 4.0 // some paddings
+        + orig_spacing; // padding under sliders
+
     let scroll_height = if theme.is_some() && selected_color.is_some() {
-        ui.available_height() - 385.0
+        ui.available_height() - color_picker_height
     } else {
         ui.available_height()
     };
@@ -119,10 +139,9 @@ fn color_picker(
 ) -> bool {
     let mut deselect = false;
 
-    // Trim label to 30 characters and add an ellipsis if necessary
-    const MAX_TITLE_CHARS: usize = 35;
-    let label = if selected_color_name.len() > MAX_TITLE_CHARS {
-        &format!("{}...", &selected_color_name[..MAX_TITLE_CHARS])
+    let max_title_chars = (ui.available_width() * 0.12) as usize;
+    let label = if selected_color_name.len() > max_title_chars {
+        &format!("{}...", &selected_color_name[..max_title_chars])
     } else {
         selected_color_name
     };
