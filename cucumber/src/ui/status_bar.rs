@@ -21,7 +21,9 @@ impl Progress {
 pub fn status_bar(ui: &mut egui::Ui, status_bar: &StatusBar) {
     ui.horizontal(|ui| {
         const VERSION: &str = env!("CARGO_PKG_VERSION");
-        ui.weak(format!("Cucumber v{}", VERSION));
+        ui.weak(format!("Cucumber v{}", VERSION)).on_hover_ui(|ui| {
+            ui.label("Because cucumbers are not orange");
+        });
         ui.separator();
         if let Some(progress) = &status_bar.progress {
             ui.weak(progress.group);
