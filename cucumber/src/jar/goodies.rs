@@ -14,6 +14,7 @@ pub struct GeneralGoodies {
     pub raw_colors: RawColorGoodies,
     pub timeline_color_ref: Option<TimelineColorReference>, // Don't exist on 5.2.4?
     pub release_metadata: Vec<(String, String)>,
+    pub named_color_getter_1: MethodDescription,
 }
 
 #[derive(Debug, Clone)]

@@ -1,11 +1,8 @@
-use super::{
-    extract_palette_color_methods, extract_raw_color_goodies, extract_release_metadata,
-    scan_for_named_color_defs,
-};
+use super::{extract_raw_color_goodies, scan_for_named_color_defs};
 use crate::{
     jar::{
         debug::debug_print_color,
-        goodies::{GeneralGoodies, MethodDescription, MethodSignatureKind},
+        goodies::{GeneralGoodies, MethodDescription, MethodSignatureKind, PaletteColorMethods},
         legacy::TimelineColorReference,
     },
     types::{Stage, StageProgress, ThemeProcessingEvent},
@@ -19,7 +16,7 @@ use krakatau2::lib::{
         parse::Class,
     },
     disassemble::refprinter::{ConstData, FmimTag, PrimTag, RefPrinter, SingleTag},
-    ParserOptions,
+    parse_utf8, ParserOptions,
 };
 use krakatau2::zip::ZipArchive;
 use std::collections::HashMap;
@@ -80,6 +77,9 @@ pub fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
     let mut timeline_color_ref = None;
     let mut release_metadata = None;
 
+    let mut named_color_getter_1 = None;
+    let mut deferred_named_color_getter_1_extraction = None;
+
     let mut data = Vec::new();
 
     report_progress(ThemeProcessingEvent {
@@ -136,6 +136,19 @@ pub fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
                         fmim_idx: class_cp_idx,
                     });
                 }
+                UsefulFileType::NamedColorGetter1 => {
+                    debug!("Found named color getter 1: {}", file_name);
+                    if let Some(raw_color_goodies) = &raw_color_goodies {
+                        if let Some(method_description) = extract_named_color_getter_1(
+                            &class,
+                            &raw_color_goodies.methods.rgba_f.class,
+                        ) {
+                            named_color_getter_1 = Some(method_description);
+                        }
+                    } else {
+                        deferred_named_color_getter_1_extraction = Some(file_name.clone());
+                    }
+                }
             }
         }
         drop(file);
@@ -154,6 +167,22 @@ pub fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
         progress: StageProgress::Done,
     });
     debug!("------------");
+
+    if let Some(deferred_named_color_getter_1) = deferred_named_color_getter_1_extraction {
+        let mut file = zip.by_name(&deferred_named_color_getter_1).unwrap();
+
+        data.clear();
+        file.read_to_end(&mut data)?;
+
+        let class = classfile::parse(&data, PARSER_OPTIONS).unwrap();
+
+        if let Some(method_description) = extract_named_color_getter_1(
+            &class,
+            &raw_color_goodies.as_ref().unwrap().methods.rgba_f.class,
+        ) {
+            named_color_getter_1 = Some(method_description);
+        }
+    }
 
     let mut all_named_colors = Vec::new();
 
@@ -225,6 +254,7 @@ pub fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
         raw_colors: raw_color_goodies.unwrap(),
         timeline_color_ref,
         release_metadata: release_metadata.unwrap_or_default(),
+        named_color_getter_1: named_color_getter_1.unwrap(),
     })
 }
 
@@ -234,6 +264,7 @@ enum UsefulFileType {
     RawColor,
     Init,
     CrashReport,
+    NamedColorGetter1,
     TimelineColorCnst {
         field_type_cp_idx: u16,
         fmim_idx: u16,
@@ -242,13 +273,20 @@ enum UsefulFileType {
 }
 
 fn is_useful_file(class: &Class) -> Option<UsefulFileType> {
-    if let Some(mtch) =
-        has_any_string_in_constant_pool(class, &[PALETTE_ANCHOR, INIT_ANCHOR, CRASH_REPORT_ANCHOR])
-    {
+    if let Some(mtch) = has_any_string_in_constant_pool(
+        class,
+        &[
+            PALETTE_ANCHOR,
+            INIT_ANCHOR,
+            CRASH_REPORT_ANCHOR,
+            NAMED_COLOR_GETTER_1_ANCHOR,
+        ],
+    ) {
         let useful_file_type = match mtch {
             PALETTE_ANCHOR => UsefulFileType::MainPalette,
             INIT_ANCHOR => UsefulFileType::Init,
             CRASH_REPORT_ANCHOR => UsefulFileType::CrashReport,
+            NAMED_COLOR_GETTER_1_ANCHOR => UsefulFileType::NamedColorGetter1,
             _ => return None,
         };
         return Some(useful_file_type);
@@ -538,4 +576,152 @@ pub fn find_const_name(rp: &RefPrinter<'_>, id: u16) -> Option<String> {
     let _class_name = utf_data.s.to_string();
 
     Some(const_name)
+}
+
+fn extract_named_color_getter_1(class: &Class, raw_color_class: &str) -> Option<MethodDescription> {
+    let sig_start = format!("(Ljava/lang/String;)L{};", raw_color_class);
+    for field in &class.methods {
+        let descriptor = class.cp.utf8(field.desc).and_then(parse_utf8)?;
+        if descriptor.starts_with(&sig_start) {
+            let class_name = class.cp.clsutf(class.this).and_then(parse_utf8)?;
+            let method = class.cp.utf8(field.name).and_then(parse_utf8)?;
+
+            return Some(MethodDescription {
+                class: class_name,
+                method,
+                signature: descriptor,
+                signature_kind: None,
+            });
+        }
+    }
+    None
+}
+
+fn extract_palette_color_methods(class: &Class) -> Option<PaletteColorMethods> {
+    // debug!("Searching palette color methods");
+
+    let rp = init_refprinter(&class.cp, &class.attrs);
+
+    let _class_name = class.cp.clsutf(class.this).and_then(parse_utf8)?;
+    // debug!("Class >>>>> {}", class_name);
+
+    let main_palette_method = class.methods.iter().skip(1).next()?;
+    let attr = main_palette_method.attrs.first()?;
+    let AttrBody::Code((code_1, _)) = &attr.body else {
+        return None;
+    };
+
+    let bytecode = &code_1.bytecode;
+
+    let invokes = bytecode.0.iter().filter_map(|(_, ix)| match ix {
+        Instr::Invokevirtual(method_id) => Some(method_id),
+        _ => None,
+    });
+
+    let grayscale_i = find_method("(Ljava/lang/String;I)", None, None, &invokes, &rp)?;
+    let color_record_class_name = grayscale_i
+        .signature
+        .split_once("I)L")
+        .map(|(_, suffix)| suffix.strip_suffix(";"))
+        .flatten()?;
+    let rgb_i = find_method(
+        "(Ljava/lang/String;III)",
+        Some(color_record_class_name),
+        None,
+        &invokes,
+        &rp,
+    )?;
+    let rgba_i_absolute = find_method(
+        "(Ljava/lang/String;IIII)",
+        Some(color_record_class_name),
+        None,
+        &invokes,
+        &rp,
+    )?;
+    // TODO: search this method not by position, but by difference against rgba_i_absolute
+    let rgba_i_blended_on_background = find_method(
+        "(Ljava/lang/String;IIII)",
+        Some(color_record_class_name),
+        Some(1),
+        &invokes,
+        &rp,
+    )?;
+    let hsv_f_relative_to_background = find_method(
+        "(Ljava/lang/String;FFF)",
+        Some(color_record_class_name),
+        None,
+        &invokes,
+        &rp,
+    )?;
+    let ref_hsv_f = find_method(
+        &format!("(Ljava/lang/String;L{};FFF)", color_record_class_name),
+        Some(color_record_class_name),
+        None,
+        &invokes,
+        &rp,
+    )?;
+    let name_hsv_f = find_method(
+        "(Ljava/lang/String;Ljava/lang/String;FFF)",
+        Some(color_record_class_name),
+        None,
+        &invokes,
+        &rp,
+    )?;
+
+    Some(PaletteColorMethods {
+        grayscale_i,
+        rgb_i,
+        rgba_i_absolute,
+        rgba_i_blended_on_background,
+        hsv_f_relative_to_background,
+        ref_hsv_f,
+        name_hsv_f,
+    })
+}
+
+fn find_method<'a, T>(
+    signature_start: &str,
+    color_rec_name: Option<&str>,
+    skip: Option<usize>,
+    invokes: &'a T,
+    rp: &RefPrinter<'_>,
+) -> Option<MethodDescription>
+where
+    T: Iterator<Item = &'a u16> + Clone,
+{
+    let invokes = invokes.clone();
+    invokes
+        .filter_map(|method_id| {
+            let method_descr = find_method_description(rp, *method_id, color_rec_name)?;
+            if method_descr.signature.starts_with(signature_start) {
+                Some(method_descr)
+            } else {
+                None
+            }
+        })
+        .skip(skip.unwrap_or_default())
+        .next()
+}
+
+fn extract_release_metadata(class: &Class) -> Option<Vec<(String, String)>> {
+    // Find any strings in constant pool which contain the ": " substring
+    let mut metadata = Vec::new();
+    for entry in &class.cp.0 {
+        if let classfile::cpool::Const::Utf8(txt) = entry {
+            let parsed_string = String::from_utf8_lossy(txt.0);
+            let Some((key, value)) = parsed_string.split_once(": ") else {
+                continue;
+            };
+            let key = key.trim();
+            let value = value.trim();
+            let key_count = key.chars().filter(|c| c.is_alphanumeric()).count();
+            let value_count = value.chars().filter(|c| c.is_alphanumeric()).count();
+            if value_count == 0 || key_count == 0 || key == "Not obfuscated" {
+                continue;
+            }
+            metadata.push((key.to_string(), value.to_string()));
+        }
+    }
+
+    Some(metadata)
 }

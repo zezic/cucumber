@@ -4,6 +4,7 @@ use re_ui::{list_item::PropertyContent, UiExt};
 use crate::jar::goodies::GeneralGoodies;
 
 pub fn right_panel(ui: &mut egui::Ui, goodies: &Option<GeneralGoodies>) {
+    let orig_spacing = ui.spacing_mut().item_spacing.y;
     ui.spacing_mut().item_spacing.y = 0.0;
 
     ui.panel_content(|ui| {
@@ -14,6 +15,15 @@ pub fn right_panel(ui: &mut egui::Ui, goodies: &Option<GeneralGoodies>) {
                         ui.list_item()
                             .show_flat(ui, PropertyContent::new(key).value_text(value));
                     }
+
+                    ui.add_space(orig_spacing);
+                    ui.full_span_separator();
+                    ui.add_space(orig_spacing);
+
+                    ui.label(&format!(
+                        "Named Color Getter 1: {:#?}",
+                        goodies.named_color_getter_1
+                    ));
                 });
             } else {
                 ui.centered_and_justified(|ui| {

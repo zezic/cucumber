@@ -1,36 +1,24 @@
-use std::{collections::HashMap, fmt::Debug, io::Read};
+use std::{collections::HashMap, fmt::Debug};
 
-use krakatau2::{
-    lib::{
-        assemble,
-        classfile::{
-            self,
-            attrs::{AttrBody, Attribute},
-            code::{Bytecode, Instr, Pos},
-            cpool::{BStr, Const, ConstPool},
-            parse::Class,
-        },
-        disassemble::refprinter::{ConstData, FmimTag, PrimTag, RefPrinter, SingleTag},
-        parse_utf8, AssemblerOptions, DisassemblerOptions,
+use krakatau2::lib::{
+    assemble,
+    classfile::{
+        attrs::AttrBody,
+        code::{Bytecode, Instr},
+        parse::Class,
     },
-    zip::ZipArchive,
+    disassemble::refprinter::{ConstData, RefPrinter},
+    parse_utf8, AssemblerOptions, DisassemblerOptions,
 };
 use thiserror::Error;
-use tracing::{debug, warn};
+use tracing::debug;
 
-use crate::{
-    jar::{
-        analysis::{
-            find_const_name, find_method_by_sig, find_method_description, find_utf_ldc,
-            init_refprinter,
-        },
-        goodies::{
-            ColorComponents, MethodDescription, MethodSignatureKind, NamedColor,
-            PaletteColorMethods, RawColorConst, RawColorConstants, RawColorGoodies,
-            RawColorMethods,
-        },
+use crate::jar::{
+    analysis::{find_const_name, find_method_description, find_utf_ldc, init_refprinter},
+    goodies::{
+        ColorComponents, MethodDescription, MethodSignatureKind, NamedColor, PaletteColorMethods,
+        RawColorConst, RawColorConstants, RawColorGoodies, RawColorMethods,
     },
-    types::CompositingMode,
 };
 
 pub mod analysis;
@@ -413,112 +401,4 @@ fn extract_raw_color_goodies(class: &Class) -> Option<RawColorGoodies> {
         methods: raw_color_methods,
         constants: RawColorConstants { consts },
     })
-}
-
-fn extract_palette_color_methods(class: &Class) -> Option<PaletteColorMethods> {
-    // debug!("Searching palette color methods");
-
-    let rp = init_refprinter(&class.cp, &class.attrs);
-
-    let _class_name = class.cp.clsutf(class.this).and_then(parse_utf8)?;
-    // debug!("Class >>>>> {}", class_name);
-
-    let main_palette_method = class.methods.iter().skip(1).next()?;
-    let attr = main_palette_method.attrs.first()?;
-    let AttrBody::Code((code_1, _)) = &attr.body else {
-        return None;
-    };
-
-    let bytecode = &code_1.bytecode;
-
-    let invokes = bytecode.0.iter().filter_map(|(_, ix)| match ix {
-        Instr::Invokevirtual(method_id) => Some(method_id),
-        _ => None,
-    });
-
-    let find_method = |signature_start: &str, color_rec_name: Option<&str>, skip: Option<usize>| {
-        let invokes = invokes.clone();
-        invokes
-            .filter_map(|method_id| {
-                let method_descr = find_method_description(&rp, *method_id, color_rec_name)?;
-                if method_descr.signature.starts_with(signature_start) {
-                    Some(method_descr)
-                } else {
-                    None
-                }
-            })
-            .skip(skip.unwrap_or_default())
-            .next()
-    };
-
-    let grayscale_i = find_method("(Ljava/lang/String;I)", None, None)?;
-    let color_record_class_name = grayscale_i
-        .signature
-        .split_once("I)L")
-        .map(|(_, suffix)| suffix.strip_suffix(";"))
-        .flatten()?;
-    let rgb_i = find_method(
-        "(Ljava/lang/String;III)",
-        Some(color_record_class_name),
-        None,
-    )?;
-    let rgba_i_absolute = find_method(
-        "(Ljava/lang/String;IIII)",
-        Some(color_record_class_name),
-        None,
-    )?;
-    // TODO: search this method not by position, but by difference against rgba_i_absolute
-    let rgba_i_blended_on_background = find_method(
-        "(Ljava/lang/String;IIII)",
-        Some(color_record_class_name),
-        Some(1),
-    )?;
-    let hsv_f_relative_to_background = find_method(
-        "(Ljava/lang/String;FFF)",
-        Some(color_record_class_name),
-        None,
-    )?;
-    let ref_hsv_f = find_method(
-        &format!("(Ljava/lang/String;L{};FFF)", color_record_class_name),
-        Some(color_record_class_name),
-        None,
-    )?;
-    let name_hsv_f = find_method(
-        "(Ljava/lang/String;Ljava/lang/String;FFF)",
-        Some(color_record_class_name),
-        None,
-    )?;
-
-    Some(PaletteColorMethods {
-        grayscale_i,
-        rgb_i,
-        rgba_i_absolute,
-        rgba_i_blended_on_background,
-        hsv_f_relative_to_background,
-        ref_hsv_f,
-        name_hsv_f,
-    })
-}
-
-fn extract_release_metadata(class: &Class) -> Option<Vec<(String, String)>> {
-    // Find any strings in constant pool which contain the ": " substring
-    let mut metadata = Vec::new();
-    for entry in &class.cp.0 {
-        if let classfile::cpool::Const::Utf8(txt) = entry {
-            let parsed_string = String::from_utf8_lossy(txt.0);
-            let Some((key, value)) = parsed_string.split_once(": ") else {
-                continue;
-            };
-            let key = key.trim();
-            let value = value.trim();
-            let key_count = key.chars().filter(|c| c.is_alphanumeric()).count();
-            let value_count = value.chars().filter(|c| c.is_alphanumeric()).count();
-            if value_count == 0 || key_count == 0 || key == "Not obfuscated" {
-                continue;
-            }
-            metadata.push((key.to_string(), value.to_string()));
-        }
-    }
-
-    Some(metadata)
 }
