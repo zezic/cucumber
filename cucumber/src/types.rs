@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-use crate::GeneralGoodies;
+use crate::jar::goodies::GeneralGoodies;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum NamedColor {

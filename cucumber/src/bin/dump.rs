@@ -5,7 +5,7 @@ use std::{
 };
 
 use cucumber::{
-    extract_general_goodies,
+    jar::analysis::extract_general_goodies,
     types::{AbsoluteColor, ColorConst, CucumberBitwigTheme, NamedColor, UiTarget},
 };
 use krakatau2::zip;

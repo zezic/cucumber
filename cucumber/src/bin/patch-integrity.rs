@@ -3,8 +3,9 @@ use std::{env, fs, path::Path};
 
 use anyhow::anyhow;
 
+use cucumber::jar::analysis::extract_general_goodies;
+use cucumber::jar::reasm;
 use cucumber::patching::patch_class;
-use cucumber::{extract_general_goodies, reasm};
 use krakatau2::{
     file_output_util::Writer,
     lib::{classfile, ParserOptions},

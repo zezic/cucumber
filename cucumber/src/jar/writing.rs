@@ -14,11 +14,11 @@ use krakatau2::{
 use tracing::warn;
 
 use crate::{
-    extract_general_goodies,
+    jar::{
+        analysis::extract_general_goodies, goodies::ColorComponents, reasm, replace_named_color,
+    },
     patching::patch_class,
-    reasm, replace_named_color,
     types::{CompositingMode, NamedColor, Stage, StageProgress, ThemeProcessingEvent},
-    ColorComponents,
 };
 
 pub fn write_theme_to_jar(

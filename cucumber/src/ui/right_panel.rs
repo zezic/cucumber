@@ -1,7 +1,7 @@
 use eframe::egui;
 use re_ui::{list_item::PropertyContent, UiExt};
 
-use crate::GeneralGoodies;
+use crate::jar::goodies::GeneralGoodies;
 
 pub fn right_panel(ui: &mut egui::Ui, goodies: &Option<GeneralGoodies>) {
     ui.spacing_mut().item_spacing.y = 0.0;
