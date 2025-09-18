@@ -1,7 +1,7 @@
 use eframe::egui;
 use re_ui::{list_item::PropertyContent, UiExt};
 
-use crate::jar::goodies::GeneralGoodies;
+use crate::jar::types::metadata::GeneralGoodies;
 
 pub fn right_panel(ui: &mut egui::Ui, goodies: &Option<GeneralGoodies>) {
     let orig_spacing = ui.spacing_mut().item_spacing.y;
@@ -42,7 +42,7 @@ pub fn right_panel(ui: &mut egui::Ui, goodies: &Option<GeneralGoodies>) {
                                 ui,
                                 PropertyContent::new(color_name).value_text(&format!(
                                     "{}::{}:{}",
-                                    invocation.class, invocation.method, invocation.ldc_pos.0
+                                    invocation.class, invocation.method, invocation.ldc_pos
                                 )),
                             );
                         }

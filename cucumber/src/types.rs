@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-use crate::jar::goodies::GeneralGoodies;
+use crate::jar::types::metadata::GeneralGoodies;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum NamedColor {
@@ -167,9 +167,19 @@ impl CucumberBitwigTheme {
             .collect();
 
         for color in &general_goodies.named_colors {
-            let Some((r, g, b)) = color.components.to_rgb(&known_colors) else {
-                warn!("Unsupported color: {:?}", color.color_name);
-                continue;
+            let (r, g, b) = match color.components.to_rgb(&known_colors) {
+                Ok(Some((r, g, b))) => (r, g, b),
+                Ok(None) => {
+                    warn!("Unsupported color (delta/relative): {:?}", color.color_name);
+                    continue;
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to convert color '{}' to RGB: {}",
+                        color.color_name, e
+                    );
+                    continue;
+                }
             };
             let a = color.components.alpha().unwrap_or(255);
             let named_color = NamedColor::Absolute(AbsoluteColor {
@@ -193,7 +203,7 @@ impl CucumberBitwigTheme {
                 .iter()
                 .find(|cnst| cnst.const_name == timeline_const_name)
                 .unwrap();
-            if let Some((r, g, b)) = timeline_const.color_comps.to_rgb(&known_colors) {
+            if let Ok(Some((r, g, b))) = timeline_const.color_comps.to_rgb(&known_colors) {
                 let a = timeline_const.color_comps.alpha().unwrap_or(255);
                 let timeline_color_const = ColorConst::from_comps(r, g, b, a);
                 theme

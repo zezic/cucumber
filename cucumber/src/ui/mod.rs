@@ -14,9 +14,7 @@ use re_ui::notifications::NotificationUi;
 use tracing::error;
 
 use crate::{
-    jar::{
-        analysis::extract_general_goodies, goodies::GeneralGoodies, writing::write_theme_to_jar,
-    },
+    jar::{analysis::extract_general_goodies, io::write_theme_to_jar, GeneralGoodies},
     types::{CucumberBitwigTheme, NamedColor, StageProgress, ThemeOperation, ThemeProcessingEvent},
     ui::{
         central_panel::central_panel,

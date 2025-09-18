@@ -15,10 +15,11 @@ use tracing::warn;
 
 use crate::{
     jar::{
-        analysis::extract_general_goodies, goodies::ColorComponents,
-        modification::replace_named_color, reasm,
+        analysis::extractor::extract_general_goodies,
+        core::assembly::reasm,
+        modification::{color_replacer::replace_named_color, patcher::patch_class},
+        types::colors::ColorComponents,
     },
-    patching::patch_class,
     types::{CompositingMode, NamedColor, Stage, StageProgress, ThemeProcessingEvent},
 };
 

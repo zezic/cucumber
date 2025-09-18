@@ -34,13 +34,23 @@ fn main() -> anyhow::Result<()> {
 
     for color in general_goodies.named_colors {
         let a = color.components.alpha().unwrap_or(255);
-        let Some((r, g, b)) = color.components.to_rgb(&known_colors) else {
-            // TODO: Implement conversion to RGB for any color
-            warn!(
-                "Skipping color {} because it cannot be converted to RGB",
-                color.color_name
-            );
-            continue;
+        let (r, g, b) = match color.components.to_rgb(&known_colors) {
+            Ok(Some((r, g, b))) => (r, g, b),
+            Ok(None) => {
+                // TODO: Implement conversion to RGB for any color
+                warn!(
+                    "Skipping color {} because it cannot be converted to RGB (delta/relative color)",
+                    color.color_name
+                );
+                continue;
+            }
+            Err(e) => {
+                warn!(
+                    "Skipping color {} due to conversion error: {}",
+                    color.color_name, e
+                );
+                continue;
+            }
         };
         let named_color = NamedColor::Absolute(AbsoluteColor {
             r,
@@ -63,7 +73,7 @@ fn main() -> anyhow::Result<()> {
             .iter()
             .find(|cnst| cnst.const_name == timeline_const_name)
             .unwrap();
-        if let Some((r, g, b)) = timeline_const.color_comps.to_rgb(&known_colors) {
+        if let Ok(Some((r, g, b))) = timeline_const.color_comps.to_rgb(&known_colors) {
             let a = timeline_const.color_comps.alpha().unwrap_or(255);
             let timeline_color_const = ColorConst::from_comps(r, g, b, a);
             theme

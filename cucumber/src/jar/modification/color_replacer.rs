@@ -8,8 +8,12 @@ use tracing::{debug, warn};
 
 use crate::{
     jar::{
-        analysis::{find_method_by_sig, find_method_description, find_utf_ldc, init_refprinter},
-        goodies::{ColorComponents, NamedColor, PaletteColorMethods},
+        analysis::introspection::{find_method_by_sig, find_method_description, find_utf_ldc},
+        core::assembly::init_refprinter,
+        types::{
+            colors::{ColorComponents, NamedColor},
+            methods::PaletteColorMethods,
+        },
     },
     types::CompositingMode,
 };

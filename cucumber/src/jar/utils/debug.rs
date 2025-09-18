@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use tracing::debug;
 
-use crate::jar::goodies::ColorComponents;
+use crate::jar::types::colors::ColorComponents;
 
 pub fn debug_print_color(
     class_name: &str,
@@ -10,9 +10,16 @@ pub fn debug_print_color(
     components: &ColorComponents,
     known_colors: &HashMap<String, ColorComponents>,
 ) {
-    let Some((r, g, b)) = components.to_rgb(&known_colors) else {
-        debug!("HSV Color: {:?}", components);
-        return;
+    let (r, g, b) = match components.to_rgb(&known_colors) {
+        Ok(Some((r, g, b))) => (r, g, b),
+        Ok(None) => {
+            debug!("HSV Color: {:?}", components);
+            return;
+        }
+        Err(e) => {
+            debug!("Failed to convert color to RGB: {}", e);
+            return;
+        }
     };
     use colored::Colorize;
     let a = components.alpha().unwrap_or(255);
