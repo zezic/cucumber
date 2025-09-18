@@ -20,10 +20,11 @@ pub fn right_panel(ui: &mut egui::Ui, goodies: &Option<GeneralGoodies>) {
                     ui.full_span_separator();
                     ui.add_space(orig_spacing);
 
-                    ui.label(&format!(
+                    ui.monospace(&format!(
                         "Named Color Getter 1: {:#?}",
                         goodies.named_color_getter_1
                     ));
+                    ui.add_space(orig_spacing);
                 });
             } else {
                 ui.centered_and_justified(|ui| {
@@ -39,7 +40,10 @@ pub fn right_panel(ui: &mut egui::Ui, goodies: &Option<GeneralGoodies>) {
                         for (color_name, invocation) in &goodies.named_color_getter_invocations {
                             ui.list_item().show_flat(
                                 ui,
-                                PropertyContent::new(color_name).value_text(&invocation.class),
+                                PropertyContent::new(color_name).value_text(&format!(
+                                    "{}::{}:{}",
+                                    invocation.class, invocation.method, invocation.ldc_pos.0
+                                )),
                             );
                         }
                     });

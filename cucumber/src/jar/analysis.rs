@@ -769,35 +769,87 @@ fn find_named_color_getter_1_invocations(
         };
 
         let bytecode = &code_1.bytecode;
-        let mut ldc_color_name: Option<(Pos, String)> = None;
 
+        // First, find all invocations of the target method
+        let mut invocation_positions = Vec::new();
         for (pos, instr) in &bytecode.0 {
-            match instr {
-                Instr::Ldc(id) => {
-                    if let Some(color_name) = find_utf_ldc(&rp, *id as u16) {
-                        ldc_color_name = Some((*pos, color_name));
+            if let Instr::Invokevirtual(method_id) = instr {
+                if let Some(method_descr) = find_method_description(&rp, *method_id, None) {
+                    if method_descr.class == named_color_getter.class
+                        && method_descr.method == named_color_getter.method
+                        && method_descr.signature == named_color_getter.signature
+                    {
+                        invocation_positions.push(*pos);
                     }
                 }
-                Instr::Invokevirtual(method_id) => {
-                    if let Some(method_descr) = find_method_description(&rp, *method_id, None) {
-                        if method_descr.class == named_color_getter.class
-                            && method_descr.method == named_color_getter.method
-                            && method_descr.signature == named_color_getter.signature
-                        {
-                            if let Some((ldc_pos, color_name)) = &ldc_color_name {
-                                results.push((
-                                    color_name.clone(),
-                                    NamedColorGetterInvocation {
-                                        class: class_name.clone(),
-                                        method: method_name.clone(),
-                                        ldc_pos: *ldc_pos,
-                                    },
-                                ));
-                            }
+            }
+        }
+
+        // For each invocation, find the direct preceding Ldc and any jump branches
+        for invocation_pos in invocation_positions {
+            let mut results_for_invocation = Vec::new();
+
+            // Find direct preceding Ldc
+            let mut direct_ldc = None;
+            for (pos, instr) in bytecode.0.iter().rev() {
+                if *pos >= invocation_pos {
+                    continue;
+                }
+                if let Instr::Ldc(id) = instr {
+                    if let Some(color_name) = find_utf_ldc(&rp, *id as u16) {
+                        direct_ldc = Some((*pos, color_name));
+                        break;
+                    }
+                }
+            }
+
+            // Find immediate preceding jump that targets this invocation
+            let mut jump_to_invocation = None;
+            for (pos, instr) in bytecode.0.iter().rev() {
+                if *pos >= invocation_pos {
+                    continue;
+                }
+                match instr {
+                    Instr::Goto(target) | Instr::GotoW(target) => {
+                        if *target == invocation_pos {
+                            jump_to_invocation = Some(*pos);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            // If we have a direct Ldc, add it
+            if let Some((ldc_pos, color_name)) = direct_ldc {
+                results_for_invocation.push((ldc_pos, color_name));
+            }
+
+            // If we have a jump, find the first Ldc before that jump
+            if let Some(jump_pos) = jump_to_invocation {
+                for (pos, instr) in bytecode.0.iter().rev() {
+                    if *pos >= jump_pos {
+                        continue;
+                    }
+                    if let Instr::Ldc(id) = instr {
+                        if let Some(color_name) = find_utf_ldc(&rp, *id as u16) {
+                            results_for_invocation.push((*pos, color_name));
+                            break;
                         }
                     }
                 }
-                _ => {}
+            }
+
+            // Add all found strings for this invocation
+            for (ldc_pos, color_name) in results_for_invocation {
+                results.push((
+                    color_name,
+                    NamedColorGetterInvocation {
+                        class: class_name.clone(),
+                        method: method_name.clone(),
+                        ldc_pos,
+                    },
+                ));
             }
         }
     }
