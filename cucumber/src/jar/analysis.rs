@@ -19,7 +19,7 @@ use krakatau2::lib::{
     parse_utf8, ParserOptions,
 };
 use krakatau2::zip::ZipArchive;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::io::Read;
 use tracing::debug;
 

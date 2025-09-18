@@ -2,17 +2,13 @@ use std::{
     collections::{BTreeMap, VecDeque},
     mem,
     path::{Path, PathBuf},
-    sync::{
-        mpsc::{self, Receiver},
-        Arc,
-    },
+    sync::mpsc::{self, Receiver},
 };
 
 use eframe::{
     egui::{self, CentralPanel, Context, Frame, Theme},
     App,
 };
-use egui_file_dialog::FileDialog;
 use krakatau2::zip;
 use re_ui::notifications::NotificationUi;
 use tracing::error;
@@ -53,8 +49,6 @@ pub struct MyApp {
     theme: Option<CucumberBitwigTheme>,
     general_goodies: Option<GeneralGoodies>,
     selected_color: Option<String>,
-    filter: String,
-    file_dialog: FileDialog,
     changed_colors: BTreeMap<String, NamedColor>,
     event_rx: Receiver<Event>,
     notifier: UiNotifier,
@@ -148,11 +142,6 @@ impl MyApp {
             });
         }
 
-        let file_dialog = FileDialog::new().add_file_filter(
-            "JSON",
-            Arc::new(|path| path.to_string_lossy().to_lowercase().ends_with("json")),
-        );
-
         let (command_sender, command_receiver) = command_channel(ctx.clone());
 
         Ok(Self {
@@ -161,9 +150,7 @@ impl MyApp {
             log,
             theme: None,
             general_goodies: None,
-            filter: String::new(),
             selected_color: None,
-            file_dialog,
             changed_colors: BTreeMap::new(),
             event_rx,
             notifier,
