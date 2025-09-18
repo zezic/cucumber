@@ -29,7 +29,11 @@ pub fn left_panel(
     ui.spacing_mut().item_spacing.y = 0.0;
 
     ui.panel_content(|ui| {
-        ui.panel_title_bar("Palette", None);
+        ui.panel_title_bar_with_buttons("Palette", None, |ui| {
+            if let Some(theme) = &theme {
+                ui.weak(format!("{} colors", theme.named_colors.len()));
+            }
+        });
     });
 
     let available_width = ui.available_width();
