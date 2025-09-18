@@ -4,7 +4,10 @@ use colorsys::{ColorTransform, Rgb, SaturationInSpace};
 use krakatau2::lib::classfile::code::Instr;
 use tracing::debug;
 
-use crate::{jar::legacy::TimelineColorReference, types::CompositingMode};
+use crate::{
+    jar::{analysis::NamedColorGetterInvocation, legacy::TimelineColorReference},
+    types::CompositingMode,
+};
 
 #[derive(Debug)]
 pub struct GeneralGoodies {
@@ -15,6 +18,7 @@ pub struct GeneralGoodies {
     pub timeline_color_ref: Option<TimelineColorReference>, // Don't exist on 5.2.4?
     pub release_metadata: Vec<(String, String)>,
     pub named_color_getter_1: MethodDescription,
+    pub named_color_getter_invocations: Vec<(String, NamedColorGetterInvocation)>,
 }
 
 #[derive(Debug, Clone)]

@@ -11,7 +11,7 @@ use krakatau2::lib::{
     classfile::{
         self,
         attrs::{AttrBody, Attribute},
-        code::Instr,
+        code::{Instr, Pos},
         cpool::ConstPool,
         parse::Class,
     },
@@ -19,7 +19,7 @@ use krakatau2::lib::{
     parse_utf8, ParserOptions,
 };
 use krakatau2::zip::ZipArchive;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::Read;
 use tracing::debug;
 
@@ -73,12 +73,15 @@ pub fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
     let file_names = zip.file_names().map(Into::into).collect::<Vec<String>>();
 
     let mut palette_color_meths = None;
+    let mut init_class_name = None;
     let mut raw_color_goodies = None;
     let mut timeline_color_ref = None;
     let mut release_metadata = None;
 
     let mut named_color_getter_1 = None;
     let mut deferred_named_color_getter_1_extraction = None;
+
+    let mut named_color_getter_invocations = Vec::new();
 
     let mut data = Vec::new();
 
@@ -87,13 +90,10 @@ pub fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
         progress: StageProgress::Percentage(0.0),
     });
 
-    let mut init_class_name = None;
     for (idx, file_name) in file_names.iter().enumerate() {
         let mut file = zip.by_name(file_name).unwrap();
-
         data.clear();
         file.read_to_end(&mut data)?;
-
         let Ok(class) = classfile::parse(&data, PARSER_OPTIONS) else {
             continue;
         };
@@ -210,6 +210,12 @@ pub fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
                 &mut known_colors,
             );
             all_named_colors.extend(found);
+
+            if let Some(named_color_getter) = &named_color_getter_1 {
+                let invocations = find_named_color_getter_1_invocations(&class, named_color_getter);
+                named_color_getter_invocations.extend(invocations);
+            }
+
             drop(file);
 
             // Report progress every 300 files, which is about 100 reports per typical 30k bloated JAR
@@ -255,6 +261,7 @@ pub fn extract_general_goodies<R: std::io::Read + std::io::Seek>(
         timeline_color_ref,
         release_metadata: release_metadata.unwrap_or_default(),
         named_color_getter_1: named_color_getter_1.unwrap(),
+        named_color_getter_invocations,
     })
 }
 
@@ -598,12 +605,7 @@ fn extract_named_color_getter_1(class: &Class, raw_color_class: &str) -> Option<
 }
 
 fn extract_palette_color_methods(class: &Class) -> Option<PaletteColorMethods> {
-    // debug!("Searching palette color methods");
-
     let rp = init_refprinter(&class.cp, &class.attrs);
-
-    let _class_name = class.cp.clsutf(class.this).and_then(parse_utf8)?;
-    // debug!("Class >>>>> {}", class_name);
 
     let main_palette_method = class.methods.iter().skip(1).next()?;
     let attr = main_palette_method.attrs.first()?;
@@ -724,4 +726,81 @@ fn extract_release_metadata(class: &Class) -> Option<Vec<(String, String)>> {
     }
 
     Some(metadata)
+}
+
+#[derive(Debug)]
+pub struct NamedColorGetterInvocation {
+    /// Class, where method was invoked
+    pub class: String,
+    /// Method, inside which the invocation was found
+    pub method: String,
+    /// Position of the ldc instruction used to load the color name
+    pub ldc_pos: Pos,
+}
+
+/// Find all invocations of the named color getter method.
+///
+/// Returns a vector of tuples containing the color name and the invocation details.
+fn find_named_color_getter_1_invocations(
+    class: &Class,
+    named_color_getter: &MethodDescription,
+) -> Vec<(String, NamedColorGetterInvocation)> {
+    let rp = init_refprinter(&class.cp, &class.attrs);
+    let mut results = Vec::new();
+
+    let class_name = class
+        .cp
+        .clsutf(class.this)
+        .and_then(parse_utf8)
+        .unwrap_or_default();
+
+    for method in &class.methods {
+        let method_name = class
+            .cp
+            .utf8(method.name)
+            .and_then(parse_utf8)
+            .unwrap_or_default();
+
+        let Some(attr) = method.attrs.first() else {
+            continue;
+        };
+        let AttrBody::Code((code_1, _)) = &attr.body else {
+            continue;
+        };
+
+        let bytecode = &code_1.bytecode;
+        let mut ldc_color_name: Option<(Pos, String)> = None;
+
+        for (pos, instr) in &bytecode.0 {
+            match instr {
+                Instr::Ldc(id) => {
+                    if let Some(color_name) = find_utf_ldc(&rp, *id as u16) {
+                        ldc_color_name = Some((*pos, color_name));
+                    }
+                }
+                Instr::Invokevirtual(method_id) => {
+                    if let Some(method_descr) = find_method_description(&rp, *method_id, None) {
+                        if method_descr.class == named_color_getter.class
+                            && method_descr.method == named_color_getter.method
+                            && method_descr.signature == named_color_getter.signature
+                        {
+                            if let Some((ldc_pos, color_name)) = &ldc_color_name {
+                                results.push((
+                                    color_name.clone(),
+                                    NamedColorGetterInvocation {
+                                        class: class_name.clone(),
+                                        method: method_name.clone(),
+                                        ldc_pos: *ldc_pos,
+                                    },
+                                ));
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    results
 }

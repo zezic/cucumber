@@ -31,5 +31,19 @@ pub fn right_panel(ui: &mut egui::Ui, goodies: &Option<GeneralGoodies>) {
                 });
             }
         });
+
+        if let Some(goodies) = goodies {
+            ui.section_collapsing_header("Getter Invocations")
+                .show(ui, |ui| {
+                    ui.list_item_scope("getter_invocations", |ui| {
+                        for (color_name, invocation) in &goodies.named_color_getter_invocations {
+                            ui.list_item().show_flat(
+                                ui,
+                                PropertyContent::new(color_name).value_text(&invocation.class),
+                            );
+                        }
+                    });
+                });
+        }
     });
 }
