@@ -1,18 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
-    "cucumber", "entity"
+    "cucumber"
 ]
 
-# Defines a size-optimized profile for the WASM bundle in release mode
-[profile.wasm-release]
-inherits = "release"
-opt-level = 'z'
-lto = true
-codegen-units = 1
-panic = "abort"
-
 [workspace.dependencies]
-entity = { path = "entity" }
-migration = { path = "migration" }
 cucumber = { path = "cucumber" }
